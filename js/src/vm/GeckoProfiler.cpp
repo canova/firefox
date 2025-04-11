@@ -603,6 +603,22 @@ void ProfilingStackFrame::setPC(jsbytecode* pc) {
   pcOffsetIfJS_ = pcToOffset(script, pc);
 }
 
+JS_PUBLIC_API uint32_t ProfilingStackFrame::sourceId() const {
+  if (!isJsFrame()) {
+    return 0;
+  }
+
+  JSScript* script = this->script();
+  if (!script) {
+    return 0;
+  }
+  ScriptSource* scriptSource = script->scriptSource();
+  if (!scriptSource) {
+    return 0;
+  }
+  return scriptSource->id();
+}
+
 JS_PUBLIC_API void js::SetContextProfilingStack(
     JSContext* cx, ProfilingStack* profilingStack) {
   cx->geckoProfiler().setProfilingStack(

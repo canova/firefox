@@ -77,7 +77,9 @@ class ProfiledThreadData final {
       const ProfileBuffer& aBuffer, JSContext* aCx,
       mozilla::FailureLatch& aFailureLatch,
       ProfilerCodeAddressService* aService,
-      mozilla::ProgressLogger aProgressLogger);
+      mozilla::ProgressLogger aProgressLogger,
+      const mozilla::HashMap<uint32_t, uint32_t>* aSourceIdToIndexMap =
+          nullptr);
 
   void StreamJSON(const ProfileBuffer& aBuffer, JSContext* aCx,
                   SpliceableJSONWriter& aWriter, const nsACString& aProcessName,
@@ -166,7 +168,9 @@ struct ThreadStreamingContext {
                          const ProfileBuffer& aBuffer, JSContext* aCx,
                          mozilla::FailureLatch& aFailureLatch,
                          ProfilerCodeAddressService* aService,
-                         mozilla::ProgressLogger aProgressLogger);
+                         mozilla::ProgressLogger aProgressLogger,
+                         const mozilla::HashMap<uint32_t, uint32_t>*
+                             aSourceIdToIndexMap = nullptr);
 
   void FinalizeWriter();
 };
@@ -187,7 +191,9 @@ class ProcessStreamingContext final : public mozilla::FailureLatch {
   void AddThreadStreamingContext(ProfiledThreadData& aProfiledThreadData,
                                  const ProfileBuffer& aBuffer, JSContext* aCx,
                                  ProfilerCodeAddressService* aService,
-                                 mozilla::ProgressLogger aProgressLogger);
+                                 mozilla::ProgressLogger aProgressLogger,
+                                 const mozilla::HashMap<uint32_t, uint32_t>*
+                                     aSourceIdToIndexMap = nullptr);
 
   // Retrieve the ThreadStreamingContext for a given thread id.
   // Returns null if that thread id doesn't correspond to any profiled thread.

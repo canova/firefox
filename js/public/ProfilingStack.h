@@ -351,6 +351,8 @@ class ProfilingStackFrame {
 
   void trace(JSTracer* trc);
 
+  JS_PUBLIC_API uint32_t sourceId() const;
+
   // The offset of a pc into a script's code can actually be 0, so to
   // signify a nullptr pc, use a -1 index. This is checked against in
   // pc() and setPC() to set/get the right pc.

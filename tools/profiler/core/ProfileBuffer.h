@@ -43,7 +43,8 @@ class ProfileBuffer final {
 
   void CollectCodeLocation(
       const char* aLabel, const char* aStr, uint32_t aFrameFlags,
-      uint64_t aInnerWindowID, const mozilla::Maybe<uint32_t>& aLineNumber,
+      uint64_t aInnerWindowID, uint32_t aScriptId,
+      const mozilla::Maybe<uint32_t>& aLineNumber,
       const mozilla::Maybe<uint32_t>& aColumnNumber,
       const mozilla::Maybe<JS::ProfilingCategoryPair>& aCategoryPair);
 

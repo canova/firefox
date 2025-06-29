@@ -513,7 +513,8 @@ export type RequestFromFrontend =
   | GetSymbolTableRequest
   | QuerySymbolicationApiRequest
   | GetPageFaviconsRequest
-  | OpenScriptInTabDebuggerRequest;
+  | OpenScriptInTabDebuggerRequest
+  | GetJSSourcesRequest;
 
 type StatusQueryRequest = { type: "STATUS_QUERY" };
 type EnableMenuButtonRequest = { type: "ENABLE_MENU_BUTTON" };
@@ -549,6 +550,10 @@ type OpenScriptInTabDebuggerRequest = {
   line: number;
   column: number;
 };
+type GetJSSourcesRequest = {
+  type: "GET_JS_SOURCES";
+  sources: Array<{ pid: number; sourceId: number }>;
+};
 
 export type MessageToFrontend<R> =
   | OutOfBandErrorMessageToFrontend
@@ -581,7 +586,8 @@ export type ResponseToFrontend =
   | GetSymbolTableResponse
   | QuerySymbolicationApiResponse
   | GetPageFaviconsResponse
-  | OpenScriptInTabDebuggerResponse;
+  | OpenScriptInTabDebuggerResponse
+  | GetJSSourcesResponse;
 
 type StatusQueryResponse = {
   menuButtonIsEnabled: boolean;
@@ -614,6 +620,7 @@ type GetSymbolTableResponse = SymbolTableAsTuple;
 type QuerySymbolicationApiResponse = string;
 type GetPageFaviconsResponse = Array<ProfilerFaviconData | null>;
 type OpenScriptInTabDebuggerResponse = void;
+type GetJSSourcesResponse = Array<string | null>;
 
 /**
  * This represents an event channel that can talk to a content page on the web.

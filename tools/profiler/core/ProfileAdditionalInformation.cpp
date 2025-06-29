@@ -240,11 +240,39 @@ bool IPC::ParamTraits<ProfilerJSSourceData>::Read(MessageReader* aReader,
 void IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Write(
     MessageWriter* aWriter, const paramType& aParam) {
   WriteParam(aWriter, aParam.mSharedLibraries);
+
+  WriteParam(aWriter, static_cast<uint32_t>(aParam.mJSSourcesByUUID.count()));
+  for (auto iter = aParam.mJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
+    const nsCString& uuid = iter.get().key();
+    const ProfilerJSSourceData& sourceData = iter.get().value();
+    WriteParam(aWriter, uuid);
+    WriteParam(aWriter, sourceData);
+  }
 }
 
 bool IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Read(
     MessageReader* aReader, paramType* aResult) {
-  return ReadParam(aReader, &aResult->mSharedLibraries);
+  if (!ReadParam(aReader, &aResult->mSharedLibraries)) {
+    return false;
+  }
+
+  uint32_t numSources;
+  if (!ReadParam(aReader, &numSources)) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < numSources; ++i) {
+    nsCString uuid;
+    ProfilerJSSourceData sourceData;
+    if (!ReadParam(aReader, &uuid) || !ReadParam(aReader, &sourceData)) {
+      return false;
+    }
+    if (!aResult->mJSSourcesByUUID.put(uuid, std::move(sourceData))) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 }  // namespace IPC

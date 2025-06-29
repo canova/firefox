@@ -3823,6 +3823,9 @@ locked_profiler_stream_json_for_this_process(
   }
   SLOW_DOWN_FOR_TESTING();
 
+  // FIXME: Build the JS sources
+  JSSourcesByUUID jsSourcesByUUID;
+
   // Lists the samples for each thread profile
   aWriter.StartArrayProperty("threads");
   {
@@ -3972,7 +3975,8 @@ locked_profiler_stream_json_for_this_process(
   }
 #endif  // DEBUG
 
-  return ProfileGenerationAdditionalInformation{std::move(sharedLibraryInfo)};
+  return ProfileGenerationAdditionalInformation{std::move(sharedLibraryInfo),
+                                                std::move(jsSourcesByUUID)};
 }
 
 // Keep this internal function non-static, so it may be used by tests.

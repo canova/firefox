@@ -16,8 +16,12 @@
 
 #include "SharedLibraries.h"
 #include "js/Value.h"
+#include "js/Utility.h"
 #include "js/ProfilingSources.h"
+#include "mozilla/Unused.h"
 #include "nsString.h"
+#include "mozilla/HashTable.h"
+#include "nsTStringHasher.h"
 
 namespace IPC {
 class MessageReader;
@@ -27,15 +31,31 @@ struct ParamTraits;
 }  // namespace IPC
 
 namespace mozilla {
+
+// Maps UUID strings to JS source data for WebChannel requests
+using JSSourcesByUUID = mozilla::HashMap<nsCString, ProfilerJSSourceData>;
+
 // This structure contains additional information gathered while generating the
 // profile json and iterating the buffer.
 struct ProfileGenerationAdditionalInformation {
   ProfileGenerationAdditionalInformation() = default;
   explicit ProfileGenerationAdditionalInformation(
-      SharedLibraryInfo&& aSharedLibraries)
-      : mSharedLibraries(std::move(aSharedLibraries)) {}
+      SharedLibraryInfo&& aSharedLibraries, JSSourcesByUUID&& aJSSourcesByUUID)
+      : mSharedLibraries(std::move(aSharedLibraries)),
+        mJSSourcesByUUID(std::move(aJSSourcesByUUID)) {}
 
-  size_t SizeOf() const { return mSharedLibraries.SizeOf(); }
+  size_t SizeOf() const {
+    size_t size = mSharedLibraries.SizeOf();
+
+    for (auto iter = mJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
+      const nsCString& uuid = iter.get().key();
+      const ProfilerJSSourceData& sourceData = iter.get().value();
+      size += uuid.Length();
+      size += sourceData.SizeOf();
+    }
+
+    return size;
+  }
 
   ProfileGenerationAdditionalInformation(
       const ProfileGenerationAdditionalInformation& other) = delete;
@@ -49,6 +69,12 @@ struct ProfileGenerationAdditionalInformation {
 
   void Append(ProfileGenerationAdditionalInformation&& aOther) {
     mSharedLibraries.AddAllSharedLibraries(aOther.mSharedLibraries);
+
+    for (auto iter = aOther.mJSSourcesByUUID.iter(); !iter.done();
+         iter.next()) {
+      mozilla::Unused << mJSSourcesByUUID.put(iter.get().key(),
+                                              std::move(iter.get().value()));
+    }
   }
 
   void FinishGathering() { mSharedLibraries.DeduplicateEntries(); }
@@ -56,6 +82,7 @@ struct ProfileGenerationAdditionalInformation {
   void ToJSValue(JSContext* aCx, JS::MutableHandle<JS::Value> aRetVal) const;
 
   SharedLibraryInfo mSharedLibraries;
+  JSSourcesByUUID mJSSourcesByUUID;
 };
 
 struct ProfileAndAdditionalInformation {

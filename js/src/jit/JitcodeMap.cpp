@@ -106,6 +106,11 @@ uint64_t IonICEntry::realmID(JSRuntime* rt) const {
   return entry.realmID();
 }
 
+uint32_t IonICEntry::sourceId(JSRuntime* rt) const {
+  const IonEntry& entry = IonEntryForIonIC(rt, this);
+  return entry.sourceId();
+}
+
 void* BaselineEntry::canonicalNativeAddrFor(void* ptr) const {
   // TODO: We can't yet normalize Baseline addresses until we unify
   // BaselineScript's PCMappingEntries with JitcodeGlobalTable.
@@ -135,6 +140,10 @@ uint64_t BaselineInterpreterEntry::realmID() const {
   MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
 }
 
+uint32_t BaselineInterpreterEntry::sourceId() const {
+  MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
+}
+
 void* SelfHostedSharedEntry::canonicalNativeAddrFor(void* ptr) const {
   // TODO: We can't yet normalize Baseline addresses until we unify
   // BaselineScript's PCMappingEntries with JitcodeGlobalTable.
@@ -159,6 +168,8 @@ uint32_t SelfHostedSharedEntry::callStackAtAddr(void* ptr, const char** results,
 }
 
 uint64_t SelfHostedSharedEntry::realmID() const { return 0; }
+
+uint32_t SelfHostedSharedEntry::sourceId() const { return 0; }
 
 const JitcodeGlobalEntry* JitcodeGlobalTable::lookupForSampler(
     void* ptr, JSRuntime* rt, uint64_t samplePosInBuffer) {
@@ -361,6 +372,24 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
       return asDummy().realmID();
     case Kind::SelfHostedShared:
       return asSelfHostedShared().realmID();
+    case Kind::BaselineInterpreter:
+      break;
+  }
+  MOZ_CRASH("Invalid kind");
+}
+
+uint32_t JitcodeGlobalEntry::sourceId(JSRuntime* rt) const {
+  switch (kind()) {
+    case Kind::Ion:
+      return asIon().sourceId();
+    case Kind::IonIC:
+      return asIonIC().sourceId(rt);
+    case Kind::Baseline:
+      return asBaseline().sourceId();
+    case Kind::Dummy:
+      return asDummy().sourceId();
+    case Kind::SelfHostedShared:
+      return asSelfHostedShared().sourceId();
     case Kind::BaselineInterpreter:
       break;
   }
@@ -985,6 +1014,10 @@ JS::ProfiledFrameHandle::frameKind() const {
 
 JS_PUBLIC_API uint64_t JS::ProfiledFrameHandle::realmID() const {
   return entry_.realmID(rt_);
+}
+
+JS_PUBLIC_API uint32_t JS::ProfiledFrameHandle::sourceId() const {
+  return entry_.sourceId(rt_);
 }
 
 JS_PUBLIC_API JS::ProfiledFrameRange JS::GetProfiledFrames(JSContext* cx,

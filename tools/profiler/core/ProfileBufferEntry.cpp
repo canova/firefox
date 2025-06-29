@@ -558,7 +558,15 @@ static void StreamJITFrame(JSContext* aContext, SpliceableJSONWriter& aWriter,
 
   AutoArraySchemaWithStringsWriter writer(aWriter, aUniqueStrings);
 
-  writer.StringElement(LOCATION, MakeStringSpan(aJITFrame.label()));
+  uint32_t sourceId = aJITFrame.sourceId();
+  nsCString labelWithSourceId(aJITFrame.label());
+  if (sourceId) {
+    labelWithSourceId.AppendLiteral("[");
+    labelWithSourceId.AppendInt(sourceId);
+    labelWithSourceId.AppendLiteral("]");
+  }
+  writer.StringElement(LOCATION, labelWithSourceId);
+
   writer.BoolElement(RELEVANT_FOR_JS, false);
 
   // It's okay to convert uint64_t to double here because DOM always creates IDs

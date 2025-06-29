@@ -250,6 +250,8 @@ class MOZ_STACK_CLASS ProfiledFrameHandle {
   JS_PUBLIC_API ProfilingFrameIterator::FrameKind frameKind() const;
 
   JS_PUBLIC_API uint64_t realmID() const;
+
+  JS_PUBLIC_API uint32_t sourceId() const;
 };
 
 class ProfiledFrameRange {

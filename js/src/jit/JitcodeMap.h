@@ -190,6 +190,7 @@ class JitcodeGlobalEntry : public JitCodeRange {
 
   bool trace(JSTracer* trc);
   uint64_t realmID(JSRuntime* rt) const;
+  uint32_t sourceId(JSRuntime* rt) const;
   void* canonicalNativeAddrFor(JSRuntime* rt, void* ptr) const;
 
   // Read the inline call stack at a given point in the native code and append
@@ -218,14 +219,14 @@ struct ScriptSourceAndExtent {
   uint32_t toStringEnd;
 
   explicit ScriptSourceAndExtent(JSScript* script)
-    : scriptSource(script->scriptSource()),
-      toStringStart(script->toStringStart()),
-      toStringEnd(script->toStringEnd()) {}
+      : scriptSource(script->scriptSource()),
+        toStringStart(script->toStringStart()),
+        toStringEnd(script->toStringEnd()) {}
 
   bool matches(JSScript* script) const {
     return scriptSource == script->scriptSource() &&
-        toStringStart == script->toStringStart() &&
-        toStringEnd == script->toStringEnd();
+           toStringStart == script->toStringStart() &&
+           toStringEnd == script->toStringEnd();
   }
 };
 
@@ -235,7 +236,7 @@ class IonEntry : public JitcodeGlobalEntry {
     ScriptSourceAndExtent sourceAndExtent;
     UniqueChars str;
     ScriptListEntry(JSScript* script, UniqueChars str)
-      : sourceAndExtent(script), str(std::move(str)) {}
+        : sourceAndExtent(script), str(std::move(str)) {}
   };
 
   using ScriptList = Vector<ScriptListEntry, 2, SystemAllocPolicy>;
@@ -288,6 +289,8 @@ class IonEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const { return realmId_; }
 
+  uint64_t sourceId() const { return getScriptSource(0).scriptSource->id(); }
+
   bool trace(JSTracer* trc);
 };
 
@@ -312,6 +315,8 @@ class IonICEntry : public JitcodeGlobalEntry {
                            uint32_t maxResults) const;
 
   uint64_t realmID(JSRuntime* rt) const;
+
+  uint32_t sourceId(JSRuntime* rt) const;
 
   bool trace(JSTracer* trc);
 };
@@ -343,6 +348,8 @@ class BaselineEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const { return realmId_; }
 
+  uint32_t sourceId() const { return scriptSource().scriptSource->id(); }
+
   bool trace(JSTracer* trc);
 };
 
@@ -369,6 +376,8 @@ class SelfHostedSharedEntry : public JitcodeGlobalEntry {
                            uint32_t maxResults) const;
 
   uint64_t realmID() const;
+
+  uint32_t sourceId() const;
 };
 
 class BaselineInterpreterEntry : public JitcodeGlobalEntry {
@@ -384,6 +393,8 @@ class BaselineInterpreterEntry : public JitcodeGlobalEntry {
                            uint32_t maxResults) const;
 
   uint64_t realmID() const;
+
+  uint32_t sourceId() const;
 };
 
 // Dummy entries are created for jitcode generated when profiling is not
@@ -404,6 +415,8 @@ class DummyEntry : public JitcodeGlobalEntry {
   }
 
   uint64_t realmID() const { return 0; }
+
+  uint32_t sourceId() const { return 0; }
 };
 
 inline const IonEntry& JitcodeGlobalEntry::asIon() const {

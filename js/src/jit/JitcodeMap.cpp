@@ -367,9 +367,7 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
   MOZ_CRASH("Invalid kind");
 }
 
-bool JitcodeGlobalEntry::trace(JSTracer* trc) {
-  return traceJitcode(trc);
-}
+bool JitcodeGlobalEntry::trace(JSTracer* trc) { return traceJitcode(trc); }
 
 void* JitcodeGlobalEntry::canonicalNativeAddrFor(JSRuntime* rt,
                                                  void* ptr) const {

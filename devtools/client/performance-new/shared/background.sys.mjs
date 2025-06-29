@@ -113,6 +113,8 @@ export async function captureProfile(pageContext) {
     ? additionalInformation.sharedLibraries
     : Services.profiler.sharedLibraries;
   const objdirs = lazy.PrefsPresets().getObjdirPrefValue();
+  dump("canova additional info\n");
+  // dump(JSON.stringify(additionalInformation.jsSources));
 
   const { createLocalSymbolicationService } = lazy.PerfSymbolication();
   const symbolicationService = createLocalSymbolicationService(

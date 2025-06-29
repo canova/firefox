@@ -26,18 +26,37 @@ struct ParamTraits;
 }  // namespace IPC
 
 namespace mozilla {
+using ProfilerJSSources =
+    std::unordered_map<int64_t, std::unordered_map<uint32_t, std::string>>;
+
 // This structure contains additional information gathered while generating the
 // profile json and iterating the buffer.
 struct ProfileGenerationAdditionalInformation {
   ProfileGenerationAdditionalInformation() = default;
   explicit ProfileGenerationAdditionalInformation(
-      const SharedLibraryInfo&& aSharedLibraries)
-      : mSharedLibraries(aSharedLibraries) {}
+      const SharedLibraryInfo&& aSharedLibraries,
+      const ProfilerJSSources&& aJSSources)
+      : mSharedLibraries(aSharedLibraries), mJSSources(aJSSources) {}
 
-  size_t SizeOf() const { return mSharedLibraries.SizeOf(); }
+  size_t SizeOf() const {
+    size_t size = mSharedLibraries.SizeOf();
+
+    // Add size of mJSSources
+    for (const auto& processPair : mJSSources) {
+      size += sizeof(processPair.first);   // int64_t key
+      size += sizeof(processPair.second);  // unordered_map overhead
+      for (const auto& sourcePair : processPair.second) {
+        size += sizeof(sourcePair.first);  // uint32_t key
+        size += sourcePair.second.size();  // string content
+      }
+    }
+
+    return size;
+  }
 
   void Append(ProfileGenerationAdditionalInformation&& aOther) {
     mSharedLibraries.AddAllSharedLibraries(aOther.mSharedLibraries);
+    mJSSources.merge(aOther.mJSSources);
   }
 
   void FinishGathering() { mSharedLibraries.DeduplicateEntries(); }
@@ -45,6 +64,7 @@ struct ProfileGenerationAdditionalInformation {
   void ToJSValue(JSContext* aCx, JS::MutableHandle<JS::Value> aRetVal) const;
 
   SharedLibraryInfo mSharedLibraries;
+  ProfilerJSSources mJSSources;
 };
 
 struct ProfileAndAdditionalInformation {

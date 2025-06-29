@@ -3972,7 +3972,13 @@ locked_profiler_stream_json_for_this_process(
   }
 #endif  // DEBUG
 
-  return ProfileGenerationAdditionalInformation{std::move(sharedLibraryInfo)};
+  // FIXME: Build the JS sources
+  ProfilerJSSources jsSources;
+    std::unordered_map<uint32_t, std::string> sourcePair;
+    sourcePair.insert({1111, "hello world!!"});
+    jsSources.insert({ getpid(), std::move(sourcePair) });
+  return ProfileGenerationAdditionalInformation{std::move(sharedLibraryInfo),
+                                                std::move(jsSources)};
 }
 
 // Keep this internal function non-static, so it may be used by tests.

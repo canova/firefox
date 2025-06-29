@@ -146,8 +146,15 @@ declare namespace MockedExports {
     arch: string;
   }
 
+  type JSSources = {
+    [pid: number]: {
+      [sourceId: number]: string;
+    };
+  };
+
   interface ProfileGenerationAdditionalInformation {
     sharedLibraries: SharedLibrary[];
+    jsSources: JSSources;
   }
 
   interface ProfileAndAdditionalInformation {

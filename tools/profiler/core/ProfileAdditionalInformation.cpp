@@ -32,8 +32,25 @@ void mozilla::ProfileGenerationAdditionalInformation::ToJSValue(
                                  buffer16.Length(), &sharedLibrariesVal));
   }
 
+  // Create jsSources object
+  JS::Rooted<JSObject*> jsSourcesObj(aCx, JS_NewPlainObject(aCx));
+  for (const auto& processPair : mJSSources) {
+    JS::Rooted<JSObject*> processSourcesObj(aCx, JS_NewPlainObject(aCx));
+    for (const auto& sourcePair : processPair.second) {
+      JS::Rooted<JSString*> sourceStr(
+          aCx, JS_NewStringCopyZ(aCx, sourcePair.second.c_str()));
+      JS::Rooted<JS::Value> sourceVal(aCx, JS::StringValue(sourceStr));
+      JS_SetElement(aCx, processSourcesObj, sourcePair.first, sourceVal);
+    }
+    JS::Rooted<JS::Value> processSourcesVal(
+        aCx, JS::ObjectValue(*processSourcesObj));
+    JS_SetElement(aCx, jsSourcesObj, processPair.first, processSourcesVal);
+  }
+  JS::Rooted<JS::Value> jsSourcesVal(aCx, JS::ObjectValue(*jsSourcesObj));
+
   JS::Rooted<JSObject*> additionalInfoObj(aCx, JS_NewPlainObject(aCx));
   JS_SetProperty(aCx, additionalInfoObj, "sharedLibraries", sharedLibrariesVal);
+  JS_SetProperty(aCx, additionalInfoObj, "jsSources", jsSourcesVal);
   aRetVal.setObject(*additionalInfoObj);
 }
 #endif  // MOZ_GECKO_PROFILER
@@ -100,11 +117,13 @@ bool IPC::ParamTraits<SharedLibraryInfo>::Read(MessageReader* aReader,
 void IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Write(
     MessageWriter* aWriter, const paramType& aParam) {
   WriteParam(aWriter, aParam.mSharedLibraries);
+  WriteParam(aWriter, aParam.mJSSources);
 }
 
 bool IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Read(
     MessageReader* aReader, paramType* aResult) {
-  return ReadParam(aReader, &aResult->mSharedLibraries);
+  return ReadParam(aReader, &aResult->mSharedLibraries) &&
+         ReadParam(aReader, &aResult->mJSSources);
 }
 
 }  // namespace IPC

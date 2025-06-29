@@ -426,9 +426,12 @@ void ProfilerChild::GatherProfileThreadFunction(
 
                 SharedLibraryInfo sharedLibraryInfo =
                     SharedLibraryInfo::GetInfoForSelf();
+                // FIXME: Build the JS sources
+                ProfilerJSSources jsSources;
                 parameters->resolver(IPCProfileAndAdditionalInformation{
-                    shmem, Some(ProfileGenerationAdditionalInformation{
-                               std::move(sharedLibraryInfo)})});
+                    shmem,
+                    Some(ProfileGenerationAdditionalInformation{
+                        std::move(sharedLibraryInfo), std::move(jsSources)})});
                 // Let's join the gather profile thread now since it's done.
                 // Note that this gets called inside the ProfilerChild thread
                 // and not inside the gather profile thread itself.

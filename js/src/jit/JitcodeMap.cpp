@@ -72,6 +72,23 @@ uint32_t IonEntry::callStackAtAddr(void* ptr, const char** results,
   return count;
 }
 
+uint32_t IonEntry::sourceIdAtAddr(void* ptr) const {
+  MOZ_ASSERT(ptr);
+  MOZ_ASSERT(containsPointer(ptr));
+
+  uint32_t ptrOffset;
+  JitcodeRegionEntry region = RegionAtAddr(*this, ptr, &ptrOffset);
+
+  JitcodeRegionEntry::ScriptPcIterator locationIter = region.scriptPcIterator();
+  MOZ_ASSERT(locationIter.hasMore());
+
+  uint32_t scriptIdx;
+  uint32_t pcOffset;
+  locationIter.readNext(&scriptIdx, &pcOffset);
+
+  return getScriptSource(scriptIdx).scriptSource->id();
+}
+
 IonEntry::~IonEntry() {
   // The region table is stored at the tail of the compacted data,
   // which means the start of the region table is a pointer to
@@ -106,6 +123,11 @@ uint64_t IonICEntry::realmID(JSRuntime* rt) const {
   return entry.realmID();
 }
 
+uint32_t IonICEntry::sourceIdAtAddr(JSRuntime* rt, void* ptr) const {
+  const IonEntry& entry = IonEntryForIonIC(rt, this);
+  return entry.sourceIdAtAddr(rejoinAddr());
+}
+
 void* BaselineEntry::canonicalNativeAddrFor(void* ptr) const {
   // TODO: We can't yet normalize Baseline addresses until we unify
   // BaselineScript's PCMappingEntries with JitcodeGlobalTable.
@@ -135,6 +157,10 @@ uint64_t BaselineInterpreterEntry::realmID() const {
   MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
 }
 
+uint32_t BaselineInterpreterEntry::sourceIdAtAddr(void*) const {
+  MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
+}
+
 void* RealmIndependentSharedEntry::canonicalNativeAddrFor(void* ptr) const {
   // TODO: We can't yet normalize Baseline addresses until we unify
   // BaselineScript's PCMappingEntries with JitcodeGlobalTable.
@@ -158,6 +184,8 @@ uint32_t RealmIndependentSharedEntry::callStackAtAddr(
 }
 
 uint64_t RealmIndependentSharedEntry::realmID() const { return 0; }
+
+uint32_t RealmIndependentSharedEntry::sourceIdAtAddr(void*) const { return 0; }
 
 const JitcodeGlobalEntry* JitcodeGlobalTable::lookupForSampler(
     void* ptr, JSRuntime* rt, uint64_t samplePosInBuffer) {
@@ -363,6 +391,24 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
       return asRealmIndependentShared().realmID();
     case Kind::BaselineInterpreter:
       break;
+  }
+  MOZ_CRASH("Invalid kind");
+}
+
+uint32_t JitcodeGlobalEntry::sourceIdAtAddr(JSRuntime* rt, void* ptr) const {
+  switch (kind()) {
+    case Kind::Ion:
+      return asIon().sourceIdAtAddr(ptr);
+    case Kind::IonIC:
+      return asIonIC().sourceIdAtAddr(rt, ptr);
+    case Kind::Baseline:
+      return asBaseline().sourceIdAtAddr(ptr);
+    case Kind::Dummy:
+      return asDummy().sourceIdAtAddr(ptr);
+    case Kind::RealmIndependentShared:
+      return asRealmIndependentShared().sourceIdAtAddr(ptr);
+    case Kind::BaselineInterpreter:
+      return asBaselineInterpreter().sourceIdAtAddr(ptr);
   }
   MOZ_CRASH("Invalid kind");
 }
@@ -985,6 +1031,12 @@ JS::ProfiledFrameHandle::frameKind() const {
 
 JS_PUBLIC_API uint64_t JS::ProfiledFrameHandle::realmID() const {
   return entry_.realmID(rt_);
+}
+
+JS_PUBLIC_API uint32_t JS::ProfiledFrameHandle::sourceId() const {
+  void* ptr = canonicalAddr_ ? canonicalAddr_ : addr_;
+  MOZ_ASSERT(ptr);
+  return entry_.sourceIdAtAddr(rt_, ptr);
 }
 
 JS_PUBLIC_API JS::ProfiledFrameRange JS::GetProfiledFrames(JSContext* cx,

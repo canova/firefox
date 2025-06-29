@@ -59,7 +59,9 @@ class ProfileBuffer final {
   // for the given thread.
   void AddJITInfoForRange(uint64_t aRangeStart, ProfilerThreadId aThreadId,
                           JSContext* aContext, JITFrameInfo& aJITFrameInfo,
-                          mozilla::ProgressLogger aProgressLogger) const;
+                          mozilla::ProgressLogger aProgressLogger,
+                          const mozilla::HashMap<uint32_t, uint32_t>*
+                              aSourceIdToIndexMap = nullptr) const;
 
   // Stream JSON for samples in the buffer to aWriter, using the supplied
   // UniqueStacks object.

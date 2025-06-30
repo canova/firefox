@@ -112,6 +112,7 @@ namespace js {
 
 class BaseScript;
 class GeckoProfilerThread;
+class ScriptSource;
 
 // The `ProfileStringMap` weakly holds its `BaseScript*` keys and owns its
 // string values. Entries are removed when the `BaseScript` is finalized; see
@@ -119,9 +120,14 @@ class GeckoProfilerThread;
 using ProfileStringMap = HashMap<BaseScript*, JS::UniqueChars,
                                  DefaultHasher<BaseScript*>, SystemAllocPolicy>;
 
+using ProfilerScriptSourceHash =
+    HashSet<RefPtr<ScriptSource>, PointerHasher<ScriptSource*>,
+            SystemAllocPolicy>;
+
 class GeckoProfilerRuntime {
   JSRuntime* rt;
   MainThreadData<ProfileStringMap> strings_;
+  ProfilerScriptSourceHash scriptSources_;
   bool slowAssertions;
   uint32_t enabled_;
   void (*eventMarker_)(mozilla::MarkerCategory, const char*, const char*);
@@ -160,6 +166,17 @@ class GeckoProfilerRuntime {
   /* meant to be used for testing, not recommended to call in normal code */
   size_t stringsCount();
   void stringsReset();
+
+  void insertScriptSource(ScriptSource* scriptSource) {
+    if (scriptSources_.has(scriptSource)) {
+      return;
+    }
+
+    if (!scriptSources_.putNew(scriptSource)) {
+      printf("canova failed to put ScriptSource size: %u\n",
+             scriptSources_.count());
+    }
+  }
 
   const uint32_t* addressOfEnabled() const { return &enabled_; }
 

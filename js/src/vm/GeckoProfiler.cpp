@@ -108,6 +108,8 @@ void GeckoProfilerRuntime::enable(bool enabled) {
     cx->jitActivation->setLastProfilingCallSite(nullptr);
   }
 
+  scriptSources_.clear();
+
   enabled_ = enabled;
 
   /* Toggle Gecko Profiler-related jumps on baseline jitcode.
@@ -534,6 +536,11 @@ JS_PUBLIC_API void js::RegisterContextProfilingEventMarker(
   MOZ_ASSERT(cx->runtime()->geckoProfiler().enabled());
   cx->runtime()->geckoProfiler().setEventMarker(mark);
   cx->runtime()->geckoProfiler().setIntervalMarker(interval);
+}
+
+JS_PUBLIC_API void js::InsertProfilerScriptSource(JSContext* cx,
+                                                  ScriptSource* scriptSource) {
+  cx->runtime()->geckoProfiler().insertScriptSource(scriptSource);
 }
 
 AutoSuppressProfilerSampling::AutoSuppressProfilerSampling(JSContext* cx)

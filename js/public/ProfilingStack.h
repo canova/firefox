@@ -101,6 +101,8 @@ class JS_PUBLIC_API ProfilingStack;
 
 namespace js {
 
+class ScriptSource;
+
 // A call stack can be specified to the JS engine such that all JS entry/exits
 // to functions push/pop a stack frame to/from the specified stack.
 //
@@ -371,6 +373,9 @@ JS_PUBLIC_API void RegisterContextProfilingEventMarker(
     void (*mark)(mozilla::MarkerCategory, const char*, const char*),
     void (*interval)(mozilla::MarkerCategory, const char*, mozilla::TimeStamp,
                      const char*));
+
+JS_PUBLIC_API void InsertProfilerScriptSource(JSContext* cx,
+                                              ScriptSource* scriptSource);
 
 }  // namespace js
 

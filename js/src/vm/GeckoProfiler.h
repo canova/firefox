@@ -178,6 +178,9 @@ class GeckoProfilerRuntime {
     }
   }
 
+  std::unordered_map<uint32_t, std::string> getProfilerScriptSources(
+      JSContext* cx);
+
   const uint32_t* addressOfEnabled() const { return &enabled_; }
 
   void fixupStringsMapAfterMovingGC();

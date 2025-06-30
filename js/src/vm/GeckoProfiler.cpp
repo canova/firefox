@@ -16,6 +16,7 @@
 #include "jit/JitRuntime.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/PerfSpewer.h"
+#include "js/GlobalObject.h"
 #include "js/ProfilingStack.h"
 #include "vm/FrameIter.h"  // js::OnlyJSJitFrameIter
 #include "vm/JitActivation.h"
@@ -405,6 +406,113 @@ void GeckoProfilerRuntime::checkStringsMapAfterMovingGC() {
 }
 #endif
 
+/* The class of the global object. */
+static const JSClass global_class = {
+    "global",
+    JSCLASS_GLOBAL_FLAGS,
+    &JS::DefaultGlobalClassOps,
+};
+
+// Get all script sources as a map of sourceId -> sourceText
+std::unordered_map<uint32_t, std::string>
+GeckoProfilerRuntime::getProfilerScriptSources(JSContext* cx) {
+  std::unordered_map<uint32_t, std::string> result;
+
+  JS::RealmOptions options;
+  RootedObject global(cx,
+                      JS_NewGlobalObject(cx, &global_class, nullptr,
+                                         JS::DontFireOnNewGlobalHook, options));
+
+  JSAutoRealm ar(cx, global);
+
+  if (!cx || !cx->runtime() || !cx->zone()) {
+    printf("canova JSContext or runtime/zone is null, skipping\n");
+    return result;
+  }
+
+  for (auto iter = scriptSources_.iter(); !iter.done(); iter.next()) {
+    RefPtr<ScriptSource> scriptSource = iter.get();
+    if (!scriptSource) {
+      continue;
+    }
+
+    bool hasSourceText;
+    if (!ScriptSource::loadSource(cx, scriptSource, &hasSourceText)) {
+      continue;
+    }
+
+    uint32_t sourceId = scriptSource->id();
+
+    if (!hasSourceText) {
+      result[sourceId] = "[no source]";
+      continue;
+    }
+
+    size_t sourceLength = scriptSource->length();
+
+    // Handle zero-length sources
+    if (sourceLength == 0) {
+      result[sourceId] = "";
+      continue;
+    }
+
+    JSLinearString* sourceString;
+    // In case of DOM event handler like <div onclick="foo()" the JS code is
+    // wrapped into
+    //   function onclick() {foo()}
+    // We want to only return `foo()` here.
+    // But only for event handlers, for `new Function("foo()")`, we want to
+    // return:
+    //   function anonymous() {foo()}
+    if (scriptSource->hasIntroductionType() &&
+        strcmp(scriptSource->introductionType(), "eventHandler") == 0 &&
+        scriptSource->isFunctionBody()) {
+      printf("canova event handler function body\n");
+      sourceString = scriptSource->functionBodyString(cx);
+    } else {
+      printf("canova script source: id: %d - filename: %s - len: %zu\n",
+             sourceId, scriptSource->filename(), sourceLength);
+      sourceString = scriptSource->substring(cx, 0, sourceLength);
+    }
+
+    // Get the full source text
+    if (!sourceString) {
+      continue;
+    }
+
+    // Convert JSLinearString to std::string
+    if (JS::StringHasLatin1Chars(sourceString)) {
+      JS::AutoCheckCannotGC nogc;
+      const JS::Latin1Char* chars =
+          JS::GetLatin1LinearStringChars(nogc, sourceString);
+      size_t len = JS::GetLinearStringLength(sourceString);
+      result[sourceId] = std::string(reinterpret_cast<const char*>(chars), len);
+    } else {
+      // Convert UTF-16 to UTF-8
+      JS::AutoCheckCannotGC nogc;
+      const char16_t* chars =
+          JS::GetTwoByteLinearStringChars(nogc, sourceString);
+      size_t len = JS::GetLinearStringLength(sourceString);
+
+      // Simple UTF-16 to UTF-8 conversion (for ASCII-compatible content)
+      std::string utf8Result;
+      utf8Result.reserve(len);
+      for (size_t i = 0; i < len; ++i) {
+        if (chars[i] < 128) {
+          utf8Result.push_back(static_cast<char>(chars[i]));
+        } else {
+          // For non-ASCII characters, use a placeholder or proper UTF-8
+          // encoding
+          utf8Result.push_back('?');
+        }
+      }
+      result[sourceId] = std::move(utf8Result);
+    }
+  }
+
+  return result;
+}
+
 void ProfilingStackFrame::trace(JSTracer* trc) {
   if (isJsFrame()) {
     JSScript* s = rawScript();
@@ -541,6 +649,11 @@ JS_PUBLIC_API void js::RegisterContextProfilingEventMarker(
 JS_PUBLIC_API void js::InsertProfilerScriptSource(JSContext* cx,
                                                   ScriptSource* scriptSource) {
   cx->runtime()->geckoProfiler().insertScriptSource(scriptSource);
+}
+
+JS_PUBLIC_API std::unordered_map<uint32_t, std::string>
+js::GetProfilerScriptSources(JSContext* cx) {
+  return cx->runtime()->geckoProfiler().getProfilerScriptSources(cx);
 }
 
 AutoSuppressProfilerSampling::AutoSuppressProfilerSampling(JSContext* cx)

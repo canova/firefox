@@ -33,6 +33,7 @@
 #include "PageInformation.h"
 #include "PowerCounters.h"
 #include "ProfileBuffer.h"
+#include "ProfileBufferEntry.h"
 #include "ProfiledThreadData.h"
 #include "ProfilerBacktrace.h"
 #include "ProfilerChild.h"
@@ -49,6 +50,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/Perfetto.h"
+#include "mozilla/SyncRunnable.h"
 #include "nsCExternalHandlerService.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
@@ -59,6 +61,7 @@
 #include "ETWTools.h"
 
 #include "js/ProfilingFrameIterator.h"
+#include "js/ProfilingStack.h"
 #include "memory_counter.h"
 #include "memory_hooks.h"
 #include "memory_markers.h"
@@ -3972,11 +3975,43 @@ locked_profiler_stream_json_for_this_process(
   }
 #endif  // DEBUG
 
-  // FIXME: Build the JS sources
   ProfilerJSSources jsSources;
-    std::unordered_map<uint32_t, std::string> sourcePair;
-    sourcePair.insert({1111, "hello world!!"});
-    jsSources.insert({ getpid(), std::move(sourcePair) });
+  // Collect JS sources from all threads that have JSContext
+  std::unordered_map<uint32_t, std::string> allSources;
+  {
+    ThreadRegistry::LockedRegistry lockedRegistry;
+    ActivePS::ProfiledThreadList threads =
+        ActivePS::ProfiledThreads(lockedRegistry, aLock);
+
+    for (auto& thread : threads) {
+      if (thread.mJSContext) {
+        auto threadName = thread.mProfiledThreadData->Info().Name();
+        if (strcmp(threadName, "GeckoMain") != 0) {
+          continue;
+        }
+
+        JSContext* jsContext = thread.mJSContext;
+        nsCOMPtr<nsIRunnable> runnable = NS_NewRunnableFunction(
+            "GetProfilerScriptSources", [jsContext, &allSources] {
+              std::unordered_map<uint32_t, std::string> threadSources =
+                  js::GetProfilerScriptSources(jsContext);
+              // Merge sources from this thread
+              allSources.insert(threadSources.begin(), threadSources.end());
+            });
+
+        nsresult rv = SyncRunnable::DispatchToThread(
+            GetMainThreadSerialEventTarget(), runnable);
+        if (NS_FAILED(rv)) {
+          printf(
+              "canova failed to dispatch getting JS sources to the main "
+              "thread\n");
+        }
+      }
+    }
+  }
+
+  printf("canova source length: %zu\n", allSources.size());
+  jsSources.insert({getpid(), std::move(allSources)});
   return ProfileGenerationAdditionalInformation{std::move(sharedLibraryInfo),
                                                 std::move(jsSources)};
 }

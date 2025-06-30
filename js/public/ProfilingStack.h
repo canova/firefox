@@ -377,6 +377,9 @@ JS_PUBLIC_API void RegisterContextProfilingEventMarker(
 JS_PUBLIC_API void InsertProfilerScriptSource(JSContext* cx,
                                               ScriptSource* scriptSource);
 
+JS_PUBLIC_API std::unordered_map<uint32_t, std::string>
+GetProfilerScriptSources(JSContext* cx);
+
 }  // namespace js
 
 namespace JS {

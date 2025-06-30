@@ -34,6 +34,7 @@
   _(WasmCodeProtected, 450)           \
                                       \
   _(WasmInitBuiltinThunks, 451)       \
+  _(GeckoProfilerScriptSources, 499)  \
   _(StringsCache, 500)                \
   _(FutexThread, 500)                 \
   _(GeckoProfilerStrings, 500)        \

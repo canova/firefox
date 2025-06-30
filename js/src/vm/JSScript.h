@@ -374,6 +374,11 @@ struct SourceTypeTraits<char16_t> {
 [[nodiscard]] extern bool SynchronouslyCompressSource(
     JSContext* cx, JS::Handle<BaseScript*> script);
 
+// Variant return type for ScriptSource::substringChars to support both UTF-8
+// and UTF-16.
+using SubstringCharsResult =
+    mozilla::Variant<JS::UniqueChars, JS::UniqueTwoByteChars>;
+
 // [SMDOC] ScriptSource
 //
 // This class abstracts over the source we used to compile from. The current
@@ -664,6 +669,7 @@ class ScriptSource {
 
  private:
   class LoadSourceMatcher;
+  class OffMainLoadSourceMatcher;
 
  public:
   // Attempt to load usable source for |ss| -- source text on which substring
@@ -671,6 +677,13 @@ class ScriptSource {
   // |*loaded| to indicate whether usable source could be loaded; otherwise
   // return false.
   static bool loadSource(JSContext* cx, ScriptSource* ss, bool* loaded);
+
+  // This is similar to loadSource, but it is designed to be used outside of the
+  // main thread. This is done by removing the need of JSContext for the
+  // Retrievable sources that require sourceHook. For retrievable cases, it
+  // sets retrievable to true and sets the isUTF16 depending on the encoding.
+  static bool loadSourceOffMainThread(ScriptSource* ss, bool* loaded,
+                                      bool* retrievable, bool* isUTF16);
 
   // Assign source data from |srcBuf| to this recently-created |ScriptSource|.
   template <typename Unit>
@@ -881,6 +894,7 @@ class ScriptSource {
   JSLinearString* substring(JSContext* cx, size_t start, size_t stop);
   JSLinearString* substringDontDeflate(JSContext* cx, size_t start,
                                        size_t stop);
+  SubstringCharsResult substringChars(size_t start, size_t stop);
 
   [[nodiscard]] bool appendSubstring(JSContext* cx, js::StringBuilder& buf,
                                      size_t start, size_t stop);
@@ -891,6 +905,7 @@ class ScriptSource {
 
   bool isFunctionBody() { return parameterListEnd_ != 0; }
   JSLinearString* functionBodyString(JSContext* cx);
+  SubstringCharsResult functionBodyStringChars(size_t* outLength);
 
   void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                               JS::ScriptSourceInfo* info) const;

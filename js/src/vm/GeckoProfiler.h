@@ -178,6 +178,8 @@ class GeckoProfilerRuntime {
     return guard->put(scriptSource);
   }
 
+  js::ProfilerJSSources getProfilerScriptSources();
+
   const uint32_t* addressOfEnabled() const { return &enabled_; }
 
   void fixupStringsMapAfterMovingGC();

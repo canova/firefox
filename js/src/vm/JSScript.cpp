@@ -835,6 +835,7 @@ void ScriptSourceObject::clearPrivate(JSRuntime* rt) {
 }
 
 class ScriptSource::LoadSourceMatcher {
+ protected:
   JSContext* const cx_;
   ScriptSource* const ss_;
   bool* const loaded_;
@@ -925,6 +926,53 @@ class ScriptSource::LoadSourceMatcher {
 /* static */
 bool ScriptSource::loadSource(JSContext* cx, ScriptSource* ss, bool* loaded) {
   return ss->data.match(LoadSourceMatcher(cx, ss, loaded));
+}
+
+class ScriptSource::OffMainLoadSourceMatcher : ScriptSource::LoadSourceMatcher {
+  bool* const retrievable_;
+  bool* const isUTF16_;
+
+ public:
+  explicit OffMainLoadSourceMatcher(ScriptSource* ss, bool* loaded,
+                                    bool* retrievable, bool* isUTF16)
+      : LoadSourceMatcher(nullptr, ss, loaded),
+        retrievable_(retrievable),
+        isUTF16_(isUTF16) {}
+
+  template <typename Unit, SourceRetrievable CanRetrieve>
+  bool operator()(const Compressed<Unit, CanRetrieve>&) const {
+    *loaded_ = true;
+    *retrievable_ = false;
+    return true;
+  }
+
+  template <typename Unit, SourceRetrievable CanRetrieve>
+  bool operator()(const Uncompressed<Unit, CanRetrieve>&) const {
+    *loaded_ = true;
+    *retrievable_ = false;
+    return true;
+  }
+
+  template <typename Unit>
+  bool operator()(const Retrievable<Unit>&) {
+    // Retrievable requires the main thread. Do not attempt to retrieve it.
+    *loaded_ = false;
+    *retrievable_ = true;
+    *isUTF16_ = std::is_same_v<Unit, char16_t>;
+    return true;
+  }
+
+  bool operator()(const Missing&) const {
+    *loaded_ = false;
+    *retrievable_ = false;
+    return true;
+  }
+};
+
+bool ScriptSource::loadSourceOffMainThread(ScriptSource* ss, bool* loaded,
+                                           bool* retrievable, bool* isUTF16) {
+  return ss->data.match(
+      OffMainLoadSourceMatcher(ss, loaded, retrievable, isUTF16));
 }
 
 /* static */
@@ -1023,10 +1071,13 @@ const Unit* ScriptSource::chunkUnits(
     size_t chunk) {
   const CompressedData<Unit>& c = *compressedData<Unit>();
 
-  ScriptSourceChunk ssc(this, chunk);
-  if (const Unit* decompressed =
-          cx->caches().uncompressedSourceCache.lookup<Unit>(ssc, holder)) {
-    return decompressed;
+  // Try cache lookup only if we have a JSContext
+  if (cx) {
+    ScriptSourceChunk ssc(this, chunk);
+    if (const Unit* decompressed =
+            cx->caches().uncompressedSourceCache.lookup<Unit>(ssc, holder)) {
+      return decompressed;
+    }
   }
 
   size_t totalLengthInBytes = length() * sizeof(Unit);
@@ -1036,7 +1087,9 @@ const Unit* ScriptSource::chunkUnits(
   const size_t chunkLength = chunkBytes / sizeof(Unit);
   EntryUnits<Unit> decompressed(js_pod_malloc<Unit>(chunkLength));
   if (!decompressed) {
-    JS_ReportOutOfMemory(cx);
+    if (cx) {
+      JS_ReportOutOfMemory(cx);
+    }
     return nullptr;
   }
 
@@ -1045,16 +1098,27 @@ const Unit* ScriptSource::chunkUnits(
   if (!DecompressStringChunk(
           reinterpret_cast<const unsigned char*>(c.raw.chars()), chunk,
           reinterpret_cast<unsigned char*>(decompressed.get()), chunkBytes)) {
-    JS_ReportOutOfMemory(cx);
+    if (cx) {
+      JS_ReportOutOfMemory(cx);
+    }
     return nullptr;
   }
 
   const Unit* ret = decompressed.get();
-  if (!cx->caches().uncompressedSourceCache.put(
-          ssc, ToSourceData(std::move(decompressed)), holder)) {
-    JS_ReportOutOfMemory(cx);
-    return nullptr;
+
+  // Try to cache the result only if we have a JSContext
+  if (cx) {
+    ScriptSourceChunk ssc(this, chunk);
+    if (!cx->caches().uncompressedSourceCache.put(
+            ssc, ToSourceData(std::move(decompressed)), holder)) {
+      JS_ReportOutOfMemory(cx);
+      return nullptr;
+    }
+  } else {
+    // Without caching, transfer ownership to holder for memory management
+    holder.holdUnits(std::move(decompressed));
   }
+
   return ret;
 }
 
@@ -1182,7 +1246,9 @@ const Unit* ScriptSource::units(JSContext* cx,
   // decompressed units into freshly-allocated memory to return.
   EntryUnits<Unit> decompressed(js_pod_malloc<Unit>(len));
   if (!decompressed) {
-    JS_ReportOutOfMemory(cx);
+    if (cx) {
+      JS_ReportOutOfMemory(cx);
+    }
     return nullptr;
   }
 
@@ -1347,6 +1413,55 @@ JSLinearString* ScriptSource::substringDontDeflate(JSContext* cx, size_t start,
   return NewStringCopyNDontDeflate<CanGC>(cx, units.asChars(), len);
 }
 
+SubstringCharsResult ScriptSource::substringChars(size_t start, size_t stop) {
+  MOZ_ASSERT(start <= stop);
+
+  size_t len = stop - start;
+  if (!len) {
+    return SubstringCharsResult(JS::UniqueChars(nullptr));
+  }
+  UncompressedSourceCache::AutoHoldEntry holder;
+
+  // UTF-8 source text.
+  if (hasSourceType<Utf8Unit>()) {
+    // Pass nullptr JSContext - this method is designed to be called
+    // off-main-thread where JSContext is not available. Decompression still
+    // works but without caching.
+    PinnedUnits<Utf8Unit> units(nullptr, this, holder, start, len);
+    if (!units.asChars()) {
+      return SubstringCharsResult(JS::UniqueChars(nullptr));
+    }
+
+    const char* str = units.asChars();
+    // For UTF-8 source, create a copy of the char data
+    char* copy = static_cast<char*>(js_malloc(len * sizeof(char)));
+    if (!copy) {
+      return SubstringCharsResult(JS::UniqueChars(nullptr));
+    }
+
+    mozilla::PodCopy(copy, str, len);
+    return SubstringCharsResult(JS::UniqueChars(copy));
+  }
+
+  // UTF-16 source text.
+  // Pass nullptr JSContext - this method is designed to be called
+  // off-main-thread where JSContext is not available. Decompression still works
+  // but without caching.
+  PinnedUnits<char16_t> units(nullptr, this, holder, start, len);
+  if (!units.asChars()) {
+    return SubstringCharsResult(JS::UniqueTwoByteChars(nullptr));
+  }
+
+  // For UTF-16 source, create a copy of the char16_t data
+  char16_t* copy = static_cast<char16_t*>(js_malloc(len * sizeof(char16_t)));
+  if (!copy) {
+    return SubstringCharsResult(JS::UniqueTwoByteChars(nullptr));
+  }
+
+  mozilla::PodCopy(copy, units.asChars(), len);
+  return SubstringCharsResult(JS::UniqueTwoByteChars(copy));
+}
+
 bool ScriptSource::appendSubstring(JSContext* cx, StringBuilder& buf,
                                    size_t start, size_t stop) {
   MOZ_ASSERT(start <= stop);
@@ -1385,6 +1500,17 @@ JSLinearString* ScriptSource::functionBodyString(JSContext* cx) {
   size_t start = parameterListEnd_ + FunctionConstructorMedialSigils.length();
   size_t stop = length() - FunctionConstructorFinalBrace.length();
   return substring(cx, start, stop);
+}
+
+SubstringCharsResult ScriptSource::functionBodyStringChars(size_t* outLength) {
+  MOZ_ASSERT(isFunctionBody());
+
+  size_t start = parameterListEnd_ + FunctionConstructorMedialSigils.length();
+  size_t stop = length() - FunctionConstructorFinalBrace.length();
+  if (outLength) {
+    *outLength = stop - start;
+  }
+  return substringChars(start, stop);
 }
 
 template <typename ContextT, typename Unit>

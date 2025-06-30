@@ -26,6 +26,7 @@
 #include "jit/JSJitFrameIter-inl.h"
 
 using namespace js;
+using mozilla::Utf8Unit;
 
 GeckoProfilerThread::GeckoProfilerThread()
     : profilingStack_(nullptr), profilingStackIfEnabled_(nullptr) {}
@@ -412,6 +413,101 @@ void GeckoProfilerRuntime::checkStringsMapAfterMovingGC() {
 }
 #endif
 
+// Get all script sources as a list of ProfilerJSSourceData.
+js::ProfilerJSSources GeckoProfilerRuntime::getProfilerScriptSources() {
+  js::ProfilerJSSources result;
+
+  auto guard = scriptSources_.lock();
+  for (auto iter = guard->iter(); !iter.done(); iter.next()) {
+    const RefPtr<ScriptSource>& scriptSource = iter.get();
+    if (!scriptSource) {
+      continue;
+    }
+
+    bool hasSourceText;
+    bool retrievableSource;
+    bool isUTF16;
+    if (!ScriptSource::loadSourceOffMainThread(scriptSource, &hasSourceText,
+                                               &retrievableSource, &isUTF16)) {
+      continue;
+    }
+
+    uint32_t sourceId = scriptSource->id();
+
+    // Get filename for all source types. Create single copy to be moved.
+    const char* filename = scriptSource->filename();
+    size_t filenameLen = 0;
+    JS::UniqueChars filenameCopy;
+    if (filename) {
+      filenameLen = strlen(filename);
+      filenameCopy.reset(static_cast<char*>(js_malloc(filenameLen + 1)));
+      if (filenameCopy) {
+        strcpy(filenameCopy.get(), filename);
+      }
+    }
+
+    if (retrievableSource) {
+      (void)result.append(ProfilerJSSourceData::CreateRetrievableFile(
+          sourceId, std::move(filenameCopy), filenameLen));
+      continue;
+    }
+
+    if (!hasSourceText) {
+      (void)result.append(
+          ProfilerJSSourceData(sourceId, std::move(filenameCopy), filenameLen));
+      continue;
+    }
+
+    size_t sourceLength = scriptSource->length();
+    if (sourceLength == 0) {
+      (void)result.append(
+          ProfilerJSSourceData(sourceId, JS::UniqueTwoByteChars(), 0,
+                               std::move(filenameCopy), filenameLen));
+      continue;
+    }
+
+    SubstringCharsResult sourceResult(JS::UniqueChars(nullptr));
+    size_t charsLength = 0;
+
+    // In case of DOM event handler like <div onclick="foo()" the JS code is
+    // wrapped into
+    //   function onclick() {foo()}
+    // We want to only return `foo()` here.
+    // But only for event handlers, for `new Function("foo()")`, we want to
+    // return:
+    //   function anonymous() {foo()}
+    if (scriptSource->hasIntroductionType() &&
+        strcmp(scriptSource->introductionType(), "eventHandler") == 0 &&
+        scriptSource->isFunctionBody()) {
+      sourceResult = scriptSource->functionBodyStringChars(&charsLength);
+    } else {
+      sourceResult = scriptSource->substringChars(0, sourceLength);
+      charsLength = sourceLength;
+    }
+
+    // Convert SubstringCharsResult to ProfilerJSSourceData
+    if (sourceResult.is<JS::UniqueChars>()) {
+      auto& utf8Chars = sourceResult.as<JS::UniqueChars>();
+      if (!utf8Chars) {
+        continue;
+      }
+      (void)result.append(
+          ProfilerJSSourceData(sourceId, std::move(utf8Chars), charsLength,
+                               std::move(filenameCopy), filenameLen));
+    } else {
+      auto& utf16Chars = sourceResult.as<JS::UniqueTwoByteChars>();
+      if (!utf16Chars) {
+        continue;
+      }
+      (void)result.append(
+          ProfilerJSSourceData(sourceId, std::move(utf16Chars), charsLength,
+                               std::move(filenameCopy), filenameLen));
+    }
+  }
+
+  return result;
+}
+
 void ProfilingStackFrame::trace(JSTracer* trc) {
   if (isJsFrame()) {
     JSScript* s = rawScript();
@@ -527,6 +623,11 @@ JS_PUBLIC_API void js::RegisterContextProfilingEventMarker(
   MOZ_ASSERT(cx->runtime()->geckoProfiler().enabled());
   cx->runtime()->geckoProfiler().setEventMarker(mark);
   cx->runtime()->geckoProfiler().setIntervalMarker(interval);
+}
+
+JS_PUBLIC_API js::ProfilerJSSources js::GetProfilerScriptSources(
+    JSContext* cx) {
+  return cx->runtime()->geckoProfiler().getProfilerScriptSources();
 }
 
 AutoSuppressProfilerSampling::AutoSuppressProfilerSampling(JSContext* cx)

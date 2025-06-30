@@ -6,7 +6,8 @@
 
 #include "debugger/ExecutionTracer.h"
 
-#include "debugger/Frame.h"       // DebuggerFrameType
+#include "debugger/Frame.h"  // DebuggerFrameType
+#include "js/ProfilingStack.h"
 #include "vm/ObjectOperations.h"  // DefineDataElement
 #include "vm/Time.h"
 
@@ -148,6 +149,7 @@ bool ExecutionTracer::writeFunctionFrame(JSContext* cx,
     }
     if (scriptSourceRes == TracingCaches::GetOrPutResult::NewlyAdded) {
       writeScriptUrl(fn->baseScript()->scriptSource());
+      js::InsertProfilerScriptSource(cx, fn->baseScript()->scriptSource());
     }
     inlineData_.write(fn->baseScript()->lineno());
     inlineData_.write(fn->baseScript()->column().oneOriginValue());

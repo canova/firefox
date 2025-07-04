@@ -563,6 +563,8 @@ static void StreamJITFrame(JSContext* aContext, SpliceableJSONWriter& aWriter,
                            ? MakeStringSpan("ion")
                            : MakeStringSpan("baseline"));
 
+  writer.IntElement(LINE, aJITFrame.lineNumber());
+
   const JS::ProfilingCategoryPairInfo& info = JS::GetProfilingCategoryPairInfo(
       frameKind == JS::ProfilingFrameIterator::Frame_Ion
           ? JS::ProfilingCategoryPair::JS_IonMonkey

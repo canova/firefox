@@ -237,15 +237,20 @@ class MOZ_STACK_CLASS ProfiledFrameHandle {
   void* addr_;
   void* canonicalAddr_;
   const char* label_;
+  unsigned lineNumber_;
   uint32_t depth_;
 
   ProfiledFrameHandle(JSRuntime* rt, js::jit::JitcodeGlobalEntry& entry,
-                      void* addr, const char* label, uint32_t depth);
+                      void* addr, const char* label, unsigned lineNumber,
+                      uint32_t depth);
 
  public:
   const char* label() const { return label_; }
   uint32_t depth() const { return depth_; }
   void* canonicalAddress() const { return canonicalAddr_; }
+
+  // Return the line number at which this frame's execution head is stopped at.
+  JS_PUBLIC_API unsigned lineNumber() const;
 
   JS_PUBLIC_API ProfilingFrameIterator::FrameKind frameKind() const;
 
@@ -291,6 +296,7 @@ class ProfiledFrameRange {
   js::jit::JitcodeGlobalEntry* entry_;
   // Assume maximum inlining depth is <64
   const char* labels_[64];
+  unsigned lineNumbers_[64];
   uint32_t depth_;
 };
 

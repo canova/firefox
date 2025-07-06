@@ -16817,7 +16817,8 @@ bool CodeGenerator::link(JSContext* cx) {
 #ifdef DEBUG
     for (const auto* scriptSnapshot : snapshot_->scripts()) {
       JSScript* inlinedScript = scriptSnapshot->script();
-      MOZ_ASSERT(inlinedScript->realm()->creationOptions().profilerRealmID() == realmId);
+      MOZ_ASSERT(inlinedScript->realm()->creationOptions().profilerRealmID() ==
+                 realmId);
     }
 #endif
 

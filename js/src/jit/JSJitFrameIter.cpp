@@ -569,7 +569,8 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
   if (entry->isBaseline()) {
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
-    if (forLastCallSite && !entry->asBaseline().scriptSource().matches(callee)) {
+    if (forLastCallSite &&
+        !entry->asBaseline().scriptSource().matches(callee)) {
       return false;
     }
 

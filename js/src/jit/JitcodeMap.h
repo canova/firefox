@@ -19,6 +19,7 @@
 #include "js/TypeDecls.h"                 // jsbytecode
 #include "js/Vector.h"                    // Vector
 #include "vm/BytecodeLocation.h"          // BytecodeLocation
+#include "vm/Runtime.h"                   // JSRuntime
 #include "vm/SharedStencil.h"             // SharedImmutableScriptData
 
 class JSTracer;
@@ -289,7 +290,10 @@ class IonEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const { return realmId_; }
 
-  uint64_t sourceId() const { return getScriptSource(0).scriptSource->id(); }
+  uint64_t sourceId(JSRuntime* rt) const {
+    rt->geckoProfiler().insertScriptSource(getScriptSource(0).scriptSource);
+    return getScriptSource(0).scriptSource->id();
+  }
 
   bool trace(JSTracer* trc);
 };
@@ -348,7 +352,10 @@ class BaselineEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const { return realmId_; }
 
-  uint32_t sourceId() const { return scriptSource().scriptSource->id(); }
+  uint32_t sourceId(JSRuntime* rt) const {
+    rt->geckoProfiler().insertScriptSource(scriptSource().scriptSource);
+    return scriptSource().scriptSource->id();
+  }
 
   bool trace(JSTracer* trc);
 };
@@ -377,7 +384,7 @@ class SelfHostedSharedEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const;
 
-  uint32_t sourceId() const;
+  uint32_t sourceId(JSRuntime* rt) const;
 };
 
 class BaselineInterpreterEntry : public JitcodeGlobalEntry {
@@ -394,7 +401,7 @@ class BaselineInterpreterEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const;
 
-  uint32_t sourceId() const;
+  uint32_t sourceId(JSRuntime* rt) const;
 };
 
 // Dummy entries are created for jitcode generated when profiling is not
@@ -416,7 +423,7 @@ class DummyEntry : public JitcodeGlobalEntry {
 
   uint64_t realmID() const { return 0; }
 
-  uint32_t sourceId() const { return 0; }
+  uint32_t sourceId(JSRuntime* rt) const { return 0; }
 };
 
 inline const IonEntry& JitcodeGlobalEntry::asIon() const {

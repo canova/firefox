@@ -149,7 +149,7 @@ bool ExecutionTracer::writeFunctionFrame(JSContext* cx,
     }
     if (scriptSourceRes == TracingCaches::GetOrPutResult::NewlyAdded) {
       writeScriptUrl(fn->baseScript()->scriptSource());
-      js::InsertProfilerScriptSource(cx, fn->baseScript()->scriptSource());
+      js::InsertProfilerScriptSource(cx, fn->baseScript());
     }
     inlineData_.write(fn->baseScript()->lineno());
     inlineData_.write(fn->baseScript()->column().oneOriginValue());

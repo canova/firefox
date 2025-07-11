@@ -108,7 +108,7 @@ uint64_t IonICEntry::realmID(JSRuntime* rt) const {
 
 uint32_t IonICEntry::sourceId(JSRuntime* rt) const {
   const IonEntry& entry = IonEntryForIonIC(rt, this);
-  return entry.sourceId();
+  return entry.sourceId(rt);
 }
 
 void* BaselineEntry::canonicalNativeAddrFor(void* ptr) const {
@@ -140,7 +140,7 @@ uint64_t BaselineInterpreterEntry::realmID() const {
   MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
 }
 
-uint32_t BaselineInterpreterEntry::sourceId() const {
+uint32_t BaselineInterpreterEntry::sourceId(JSRuntime* rt) const {
   MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
 }
 
@@ -169,7 +169,7 @@ uint32_t SelfHostedSharedEntry::callStackAtAddr(void* ptr, const char** results,
 
 uint64_t SelfHostedSharedEntry::realmID() const { return 0; }
 
-uint32_t SelfHostedSharedEntry::sourceId() const { return 0; }
+uint32_t SelfHostedSharedEntry::sourceId(JSRuntime* rt) const { return 0; }
 
 const JitcodeGlobalEntry* JitcodeGlobalTable::lookupForSampler(
     void* ptr, JSRuntime* rt, uint64_t samplePosInBuffer) {
@@ -381,15 +381,15 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
 uint32_t JitcodeGlobalEntry::sourceId(JSRuntime* rt) const {
   switch (kind()) {
     case Kind::Ion:
-      return asIon().sourceId();
+      return asIon().sourceId(rt);
     case Kind::IonIC:
       return asIonIC().sourceId(rt);
     case Kind::Baseline:
-      return asBaseline().sourceId();
+      return asBaseline().sourceId(rt);
     case Kind::Dummy:
-      return asDummy().sourceId();
+      return asDummy().sourceId(rt);
     case Kind::SelfHostedShared:
-      return asSelfHostedShared().sourceId();
+      return asSelfHostedShared().sourceId(rt);
     case Kind::BaselineInterpreter:
       break;
   }

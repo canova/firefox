@@ -2305,6 +2305,7 @@ static void MergeStacks(
   const ProfilingStack& profilingStack = aThreadData.ProfilingStackCRef();
   const js::ProfilingStackFrame* profilingStackFrames = profilingStack.frames;
   uint32_t profilingStackFrameCount = profilingStack.stackSize();
+  auto* context = aThreadData.GetJSContext();
 
   // While the profiling stack array is ordered oldest-to-youngest, the JS and
   // native arrays are ordered youngest-to-oldest. We must add frames to aInfo
@@ -2445,6 +2446,9 @@ static void MergeStacks(
                                ExtraFlags>("", jsFrame.label, script, pc,
                                            jsFrame.realmID);
         aCollector.CollectProfilingStackFrame(stackFrame);
+        if (context) {
+          js::InsertProfilerScriptSource(context, script);
+        }
       } else {
         MOZ_ASSERT(jsFrame.kind == JS::ProfilingFrameIterator::Frame_Ion ||
                    jsFrame.kind == JS::ProfilingFrameIterator::Frame_Baseline);

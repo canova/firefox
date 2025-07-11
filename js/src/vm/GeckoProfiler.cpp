@@ -647,8 +647,13 @@ JS_PUBLIC_API void js::RegisterContextProfilingEventMarker(
 }
 
 JS_PUBLIC_API void js::InsertProfilerScriptSource(JSContext* cx,
-                                                  ScriptSource* scriptSource) {
-  cx->runtime()->geckoProfiler().insertScriptSource(scriptSource);
+                                                  JSScript* script) {
+  cx->runtime()->geckoProfiler().insertScriptSource(script->scriptSource());
+}
+
+JS_PUBLIC_API void js::InsertProfilerScriptSource(JSContext* cx,
+                                                  BaseScript* baseScript) {
+  cx->runtime()->geckoProfiler().insertScriptSource(baseScript->scriptSource());
 }
 
 JS_PUBLIC_API std::unordered_map<uint32_t, std::string>

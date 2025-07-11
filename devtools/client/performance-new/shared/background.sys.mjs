@@ -25,6 +25,7 @@ import { createLazyLoaders } from "resource://devtools/client/performance-new/sh
  * @typedef {import("../@types/perf").ProfilerBrowserInfo} ProfilerBrowserInfo
  * @typedef {import("../@types/perf").ProfileCaptureResult} ProfileCaptureResult
  * @typedef {import("../@types/perf").ProfilerFaviconData} ProfilerFaviconData
+ * @typedef {import("../@types/perf").JSSources} JSSources
  */
 
 /** @type {PerformancePref["PopupFeatureFlag"]} */
@@ -127,7 +128,8 @@ export async function captureProfile(pageContext) {
   registerProfileCaptureForBrowser(
     browser,
     profileCaptureResult,
-    symbolicationService
+    symbolicationService,
+    additionalInformation?.jsSources ?? null
   );
 }
 
@@ -343,12 +345,20 @@ async function getResponseForMessage(request, browser) {
       return openScriptInDebugger(tabId, scriptUrl, line, column);
     }
     case "GET_JS_SOURCES": {
+      const { sources } = request;
       const infoForBrowser = infoForBrowserMap.get(browser);
       if (infoForBrowser === undefined) {
         throw new Error("No JS source data found for this tab");
       }
-      // TODO: Get the additional information here and return.
-      break;
+
+      const jsSources = infoForBrowser.jsSources;
+      if (jsSources === null) {
+        return sources.map(() => null);
+      }
+
+      return sources.map(
+        ({ pid, sourceId }) => jsSources[pid][sourceId] ?? null
+      );
     }
     default: {
       console.error(
@@ -449,15 +459,18 @@ export async function handleWebChannelMessage(channel, id, message, target) {
  *   when profiler.firefox.com sends GET_SYMBOL_TABLE WebChannel messages to us. This
  *   method should obtain a symbol table for the requested binary and resolve the
  *   returned promise with it.
+ * @param {JSSources | null} jsSources - JS sources from the profile collection.
  */
 export function registerProfileCaptureForBrowser(
   browser,
   profileCaptureResult,
-  symbolicationService
+  symbolicationService,
+  jsSources
 ) {
   infoForBrowserMap.set(browser, {
     profileCaptureResult,
     symbolicationService,
+    jsSources,
   });
 }
 

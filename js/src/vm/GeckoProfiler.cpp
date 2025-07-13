@@ -418,15 +418,8 @@ std::unordered_map<uint32_t, std::string>
 GeckoProfilerRuntime::getProfilerScriptSources(JSContext* cx) {
   std::unordered_map<uint32_t, std::string> result;
 
-  JS::RealmOptions options;
-  RootedObject global(cx,
-                      JS_NewGlobalObject(cx, &global_class, nullptr,
-                                         JS::DontFireOnNewGlobalHook, options));
-
-  JSAutoRealm ar(cx, global);
-
-  if (!cx || !cx->runtime() || !cx->zone()) {
-    printf("canova JSContext or runtime/zone is null, skipping\n");
+  if (!cx) {
+    printf("canova JSContext is null, skipping\n");
     return result;
   }
 
@@ -456,7 +449,6 @@ GeckoProfilerRuntime::getProfilerScriptSources(JSContext* cx) {
       continue;
     }
 
-    JSLinearString* sourceString;
     // In case of DOM event handler like <div onclick="foo()" the JS code is
     // wrapped into
     //   function onclick() {foo()}
@@ -468,45 +460,12 @@ GeckoProfilerRuntime::getProfilerScriptSources(JSContext* cx) {
         strcmp(scriptSource->introductionType(), "eventHandler") == 0 &&
         scriptSource->isFunctionBody()) {
       printf("canova event handler function body\n");
-      sourceString = scriptSource->functionBodyString(cx);
+      result[sourceId] = scriptSource->functionBodyAsStdString();
     } else {
       printf("canova script source: id: %d - filename: %s - len: %zu\n",
              sourceId, scriptSource->filename(), sourceLength);
-      sourceString = scriptSource->substring(cx, 0, sourceLength);
-    }
-
-    // Get the full source text
-    if (!sourceString) {
-      continue;
-    }
-
-    // Convert JSLinearString to std::string
-    if (JS::StringHasLatin1Chars(sourceString)) {
-      JS::AutoCheckCannotGC nogc;
-      const JS::Latin1Char* chars =
-          JS::GetLatin1LinearStringChars(nogc, sourceString);
-      size_t len = JS::GetLinearStringLength(sourceString);
-      result[sourceId] = std::string(reinterpret_cast<const char*>(chars), len);
-    } else {
-      // Convert UTF-16 to UTF-8
-      JS::AutoCheckCannotGC nogc;
-      const char16_t* chars =
-          JS::GetTwoByteLinearStringChars(nogc, sourceString);
-      size_t len = JS::GetLinearStringLength(sourceString);
-
-      // Simple UTF-16 to UTF-8 conversion (for ASCII-compatible content)
-      std::string utf8Result;
-      utf8Result.reserve(len);
-      for (size_t i = 0; i < len; ++i) {
-        if (chars[i] < 128) {
-          utf8Result.push_back(static_cast<char>(chars[i]));
-        } else {
-          // For non-ASCII characters, use a placeholder or proper UTF-8
-          // encoding
-          utf8Result.push_back('?');
-        }
-      }
-      result[sourceId] = std::move(utf8Result);
+      // Use the new function that doesn't require JSContext
+      result[sourceId] = scriptSource->substringAsStdString(0, sourceLength);
     }
   }
 

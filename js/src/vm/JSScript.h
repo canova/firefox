@@ -885,6 +885,12 @@ class ScriptSource {
   [[nodiscard]] bool appendSubstring(JSContext* cx, js::StringBuilder& buf,
                                      size_t start, size_t stop);
 
+  // Get substring as std::string without JSContext (for profiler usage)
+  std::string substringAsStdString(size_t start, size_t stop);
+
+  // Get function body as std::string without JSContext (for profiler usage)
+  std::string functionBodyAsStdString();
+
   void setParameterListEnd(uint32_t parameterListEnd) {
     parameterListEnd_ = parameterListEnd;
   }

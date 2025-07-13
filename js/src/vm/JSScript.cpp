@@ -26,6 +26,7 @@
 #include <string.h>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "jstypes.h"
 
@@ -1376,6 +1377,129 @@ bool ScriptSource::appendSubstring(JSContext* cx, StringBuilder& buf,
     const char16_t* units = pinned.get();
     return buf.append(units, len);
   }
+}
+
+std::string ScriptSource::substringAsStdString(size_t start, size_t stop) {
+  MOZ_ASSERT(start <= stop);
+
+  size_t len = stop - start;
+  if (len == 0) {
+    return std::string();
+  }
+
+  if (hasSourceType<Utf8Unit>()) {
+    if (isUncompressed<Utf8Unit>()) {
+      // Handle uncompressed UTF-8 data
+      const Utf8Unit* units = uncompressedUnits<Utf8Unit>(start, len);
+      if (!units) {
+        return "[unavailable UTF-8 source]";
+      }
+
+      // Convert Utf8Unit to char
+      const char* chars = SourceTypeTraits<Utf8Unit>::toString(units);
+      return std::string(chars, len);
+    } else if (isCompressed<Utf8Unit>()) {
+      // Handle compressed UTF-8 data
+      const CompressedData<Utf8Unit>* compData = compressedData<Utf8Unit>();
+      if (!compData) {
+        return "[unavailable compressed UTF-8 source]";
+      }
+
+      // Try to decompress the entire source first
+      size_t uncompressedLength = compData->uncompressedLength;
+      std::vector<unsigned char> decompressed(uncompressedLength);
+
+      const unsigned char* compressedBytes =
+          reinterpret_cast<const unsigned char*>(compData->raw.chars());
+      size_t compressedLength = compData->raw.length();
+
+      if (DecompressString(compressedBytes, compressedLength,
+                           decompressed.data(), uncompressedLength)) {
+        // If we successfully decompressed, extract the requested substring
+        if (start < uncompressedLength && stop <= uncompressedLength) {
+          return std::string(
+              reinterpret_cast<const char*>(decompressed.data() + start), len);
+        }
+        // Return the whole thing if bounds are wrong
+        return std::string(reinterpret_cast<const char*>(decompressed.data()),
+                           uncompressedLength);
+      }
+      return "[failed to decompress UTF-8 source]";
+    }
+  } else if (hasSourceType<char16_t>()) {
+    if (isUncompressed<char16_t>()) {
+      // Handle uncompressed UTF-16 data
+      const char16_t* units = uncompressedUnits<char16_t>(start, len);
+      if (!units) {
+        return "[unavailable UTF-16 source]";
+      }
+
+      // Simple UTF-16 to UTF-8 conversion (for ASCII-compatible content)
+      std::string result;
+      result.reserve(len);
+      for (size_t i = 0; i < len; ++i) {
+        if (units[i] < 128) {
+          result.push_back(static_cast<char>(units[i]));
+        } else {
+          // For non-ASCII characters, use a placeholder
+          result.push_back('?');
+        }
+      }
+      return result;
+    } else if (isCompressed<char16_t>()) {
+      // Handle compressed UTF-16 data
+      const CompressedData<char16_t>* compData = compressedData<char16_t>();
+      if (!compData) {
+        return "[unavailable compressed UTF-16 source]";
+      }
+
+      // Try to decompress the entire source first
+      size_t uncompressedLength = compData->uncompressedLength;
+      std::vector<unsigned char> decompressed(uncompressedLength *
+                                              sizeof(char16_t));
+
+      const unsigned char* compressedBytes =
+          reinterpret_cast<const unsigned char*>(compData->raw.chars());
+      size_t compressedLength = compData->raw.length();
+
+      if (DecompressString(compressedBytes, compressedLength,
+                           decompressed.data(),
+                           uncompressedLength * sizeof(char16_t))) {
+        // Convert UTF-16 to UTF-8
+        const char16_t* utf16Data =
+            reinterpret_cast<const char16_t*>(decompressed.data());
+        std::string result;
+
+        // Extract the requested substring and convert to UTF-8
+        size_t substringStart = std::min(start, uncompressedLength);
+        size_t substringEnd = std::min(stop, uncompressedLength);
+        size_t substringLen = substringEnd - substringStart;
+
+        result.reserve(substringLen);
+        for (size_t i = substringStart; i < substringEnd; ++i) {
+          if (utf16Data[i] < 128) {
+            result.push_back(static_cast<char>(utf16Data[i]));
+          } else {
+            // For non-ASCII characters, use a placeholder
+            result.push_back('?');
+          }
+        }
+        return result;
+      }
+      return "[failed to decompress UTF-16 source]";
+    }
+  }
+
+  // Handle other cases (Missing, Retrievable, etc.)
+  return "[unsupported source type]";
+}
+
+std::string ScriptSource::functionBodyAsStdString() {
+  MOZ_ASSERT(isFunctionBody());
+
+  size_t start = parameterListEnd_ + FunctionConstructorMedialSigils.length();
+  size_t stop = length() - FunctionConstructorFinalBrace.length();
+  return substringAsStdString(start, stop);
 }
 
 JSLinearString* ScriptSource::functionBodyString(JSContext* cx) {

@@ -3990,26 +3990,10 @@ locked_profiler_stream_json_for_this_process(
     for (auto& thread : threads) {
       if (thread.mJSContext) {
         auto threadName = thread.mProfiledThreadData->Info().Name();
-        if (strcmp(threadName, "GeckoMain") != 0) {
-          continue;
-        }
-
-        JSContext* jsContext = thread.mJSContext;
-        nsCOMPtr<nsIRunnable> runnable = NS_NewRunnableFunction(
-            "GetProfilerScriptSources", [jsContext, &allSources] {
-              std::unordered_map<uint32_t, std::string> threadSources =
-                  js::GetProfilerScriptSources(jsContext);
-              // Merge sources from this thread
-              allSources.insert(threadSources.begin(), threadSources.end());
-            });
-
-        nsresult rv = SyncRunnable::DispatchToThread(
-            GetMainThreadSerialEventTarget(), runnable);
-        if (NS_FAILED(rv)) {
-          printf(
-              "canova failed to dispatch getting JS sources to the main "
-              "thread\n");
-        }
+        std::unordered_map<uint32_t, std::string> threadSources =
+          js::GetProfilerScriptSources(thread.mJSContext);
+        // Merge sources from this thread
+        allSources.insert(threadSources.begin(), threadSources.end());
       }
     }
   }

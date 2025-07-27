@@ -10,6 +10,7 @@
 #include "js/JSON.h"
 #include "js/PropertyAndElement.h"
 #include "js/Value.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/JSONStringWriteFuncs.h"
 #include "mozilla/ipc/IPDLParamTraits.h"
 
@@ -30,7 +31,13 @@ mozilla::ProfileGenerationAdditionalInformation::CreateJSStringFromSourceData(
   }
 
   if (aSourceData.isRetrievableFile()) {
-    // FIXME: Implement this later.
+    ProfilerJSSourceData retrievedData =
+        js::RetrieveProfilerSourceContent(aCx, aSourceData.filePath());
+
+    MOZ_RELEASE_ASSERT(retrievedData.isSourceTextUTF8(),
+                       "Retrieved JS source has to be utf-8");
+    const auto& srcText = retrievedData.asSourceTextUTF8();
+    return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
   }
 
   return JS_NewStringCopyZ(aCx, "[unavailable]");

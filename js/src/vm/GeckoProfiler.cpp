@@ -16,7 +16,7 @@
 #include "jit/JitRuntime.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/PerfSpewer.h"
-#include "js/ProfilingStack.h"
+#include "js/experimental/SourceHook.h"
 #include "vm/FrameIter.h"  // js::OnlyJSJitFrameIter
 #include "vm/JitActivation.h"
 #include "vm/JSScript.h"
@@ -644,6 +644,40 @@ JS_PUBLIC_API void js::RegisterContextProfilingEventMarker(
 JS_PUBLIC_API js::ProfilerJSSources js::GetProfilerScriptSources(
     JSContext* cx) {
   return cx->runtime()->geckoProfiler().getProfilerScriptSources();
+}
+
+JS_PUBLIC_API ProfilerJSSourceData
+js::RetrieveProfilerSourceContent(JSContext* cx, const char* filename) {
+  if (!cx) {
+    return ProfilerJSSourceData();  // Return unavailable
+  }
+
+  // Check if source hook is available and if filename is null or empty.
+  if (!cx->runtime()->sourceHook.ref() ||
+      (!filename || strlen(filename) == 0)) {
+    return ProfilerJSSourceData();  // Return unavailable
+  }
+
+  size_t sourceLength = 0;
+  char* utf8Source = nullptr;
+
+  bool loadSuccess = cx->runtime()->sourceHook->load(
+      cx, filename, nullptr, &utf8Source, &sourceLength);
+
+  if (!loadSuccess) {
+    // Clear the pending exception that have been set by the source hook.
+    JS_ClearPendingException(cx);
+    return ProfilerJSSourceData();  // Return unavailable
+  }
+
+  if (utf8Source) {
+    // Caller doesn't need sourceId or filepath.
+    return ProfilerJSSourceData(0, JS::UniqueChars(utf8Source), sourceLength,
+                                nullptr, 0);
+  }
+
+  // Hook returned success but no source data. Return unavailable.
+  return ProfilerJSSourceData();
 }
 
 AutoSuppressProfilerSampling::AutoSuppressProfilerSampling(JSContext* cx)

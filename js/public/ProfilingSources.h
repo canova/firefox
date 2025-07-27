@@ -148,6 +148,13 @@ using ProfilerJSSources =
  */
 JS_PUBLIC_API ProfilerJSSources GetProfilerScriptSources(JSContext* cx);
 
+/**
+ * Retrieve the JS sources that are only retrievable from the parent process.
+ * See RetrievableFile struct for more information.
+ * */
+JS_PUBLIC_API ProfilerJSSourceData
+RetrieveProfilerSourceContent(JSContext* cx, const char* filename);
+
 }  // namespace js
 
 #endif /* js_ProfilingSources_h */

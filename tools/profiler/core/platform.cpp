@@ -49,6 +49,11 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/Perfetto.h"
+#include "mozilla/Unused.h"
+#include "nsID.h"
+#include "nsIDUtils.h"
+#include "nsString.h"
+#include "nsHashKeys.h"
 #include "nsCExternalHandlerService.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
@@ -3823,8 +3828,39 @@ locked_profiler_stream_json_for_this_process(
   }
   SLOW_DOWN_FOR_TESTING();
 
-  // FIXME: Build the JS sources
+  // Collect JS sources from all threads that have JSContext BEFORE serializing
+  // threads. This creates the sources table and UUID mappings needed for frame
+  // serialization
   JSSourcesByUUID jsSourcesByUUID;
+
+  if (ProfilerFeature::HasJSSources(ActivePS::Features(aLock))) {
+    ThreadRegistry::LockedRegistry lockedRegistry;
+    ActivePS::ProfiledThreadList threads =
+        ActivePS::ProfiledThreads(lockedRegistry, aLock);
+
+    // Get the JS context of the main thread. We don't need to get the JSContext
+    // of others because the script source storage is shared between threads.
+    auto* mainThread =
+        std::find_if(threads.begin(), threads.end(), [](const auto& thread) {
+          return thread.mProfiledThreadData->Info().IsMainThread();
+        });
+
+    if (mainThread != threads.end() && mainThread->mJSContext) {
+      JSContext* jsContext = mainThread->mJSContext;
+
+      js::ProfilerJSSources threadSources =
+          js::GetProfilerScriptSources(jsContext);
+
+      // Generate UUIDs and build mappings for each source
+      for (ProfilerJSSourceData& sourceData : threadSources) {
+        // Generate UUID for this source and store it in the global map.
+        if (!jsSourcesByUUID.put(NSID_TrimBracketsASCII(nsID::GenerateUUID()),
+                                 std::move(sourceData))) {
+          return Err(ProfilerError::JsonGenerationFailed);
+        }
+      }
+    }
+  }
 
   // Lists the samples for each thread profile
   aWriter.StartArrayProperty("threads");

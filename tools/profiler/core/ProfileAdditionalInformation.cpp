@@ -16,6 +16,26 @@
 #ifdef MOZ_GECKO_PROFILER
 #  include "platform.h"
 
+JSString*
+mozilla::ProfileGenerationAdditionalInformation::CreateJSStringFromSourceData(
+    JSContext* aCx, const ProfilerJSSourceData& aSourceData) const {
+  if (aSourceData.isSourceTextUTF16()) {
+    const auto& srcText = aSourceData.asSourceTextUTF16();
+    return JS_NewUCStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
+  }
+
+  if (aSourceData.isSourceTextUTF8()) {
+    const auto& srcText = aSourceData.asSourceTextUTF8();
+    return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
+  }
+
+  if (aSourceData.isRetrievableFile()) {
+    // FIXME: Implement this later.
+  }
+
+  return JS_NewStringCopyZ(aCx, "[unavailable]");
+}
+
 void mozilla::ProfileGenerationAdditionalInformation::ToJSValue(
     JSContext* aCx, JS::MutableHandle<JS::Value> aRetVal) const {
   // Get the shared libraries array.
@@ -32,8 +52,27 @@ void mozilla::ProfileGenerationAdditionalInformation::ToJSValue(
                                  buffer16.Length(), &sharedLibrariesVal));
   }
 
+  // Create jsSources object, which is UUID to source text mapping for
+  // WebChannel.
+  JS::Rooted<JSObject*> jsSourcesObj(aCx, JS_NewPlainObject(aCx));
+  if (jsSourcesObj) {
+    for (auto iter = mJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
+      const nsCString& uuid = iter.get().key();
+      const ProfilerJSSourceData& sourceData = iter.get().value();
+
+      JSString* sourceStr = CreateJSStringFromSourceData(aCx, sourceData);
+      if (sourceStr) {
+        JS::Rooted<JS::Value> sourceVal(aCx, JS::StringValue(sourceStr));
+        JS_SetProperty(aCx, jsSourcesObj, PromiseFlatCString(uuid).get(),
+                       sourceVal);
+      }
+    }
+  }
+
   JS::Rooted<JSObject*> additionalInfoObj(aCx, JS_NewPlainObject(aCx));
+  JS::Rooted<JS::Value> jsSourcesVal(aCx, JS::ObjectValue(*jsSourcesObj));
   JS_SetProperty(aCx, additionalInfoObj, "sharedLibraries", sharedLibrariesVal);
+  JS_SetProperty(aCx, additionalInfoObj, "jsSources", jsSourcesVal);
   aRetVal.setObject(*additionalInfoObj);
 }
 #endif  // MOZ_GECKO_PROFILER

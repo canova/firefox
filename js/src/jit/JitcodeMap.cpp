@@ -15,6 +15,7 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
+#include "js/ProfilingFrameIterator.h"
 #include "js/Vector.h"
 #include "vm/BytecodeLocation.h"  // for BytecodeLocation
 #include "vm/GeckoProfiler.h"
@@ -47,6 +48,7 @@ void* IonEntry::canonicalNativeAddrFor(void* ptr) const {
 
 uint32_t IonEntry::callStackAtAddr(void* ptr, const char** labelResults,
                                    uint32_t* sourceIdResults,
+                                   Maybe<LineColInfo>* lineColInfo,
                                    uint32_t maxResults) const {
   MOZ_ASSERT(maxResults >= 1);
 
@@ -64,6 +66,22 @@ uint32_t IonEntry::callStackAtAddr(void* ptr, const char** labelResults,
 
     labelResults[count] = getStr(scriptIdx);
     sourceIdResults[count] = getScriptSource(scriptIdx).scriptSource->id();
+
+    // Calculate line numbers during sampling
+    // For the first entry (innermost frame), use precise PC offset from
+    // delta-run
+    if (count == 0) {
+      pcOffset = region.findPcOffset(ptrOffset, pcOffset);
+    }
+    JSScript* script = getScript(scriptIdx);
+    jsbytecode* pc = script->offsetToPC(pcOffset);
+    MOZ_ASSERT(BytecodeLocation(script, pc).isValid());
+
+    JS::LimitedColumnNumberOneOrigin col;
+    uint32_t line = JS_PCToLineNumber(script, pc, &col);
+    lineColInfo[count] = mozilla::Some(
+        LineColInfo{.line = line, .column = col.oneOriginValue()});
+
     count++;
     if (count >= maxResults) {
       break;
@@ -98,10 +116,11 @@ void* IonICEntry::canonicalNativeAddrFor(void* ptr) const { return ptr; }
 uint32_t IonICEntry::callStackAtAddr(JSRuntime* rt, void* ptr,
                                      const char** labelResults,
                                      uint32_t* sourceIdResults,
+                                     Maybe<LineColInfo>* lineColInfo,
                                      uint32_t maxResults) const {
   const IonEntry& entry = IonEntryForIonIC(rt, this);
   return entry.callStackAtAddr(rejoinAddr(), labelResults, sourceIdResults,
-                               maxResults);
+                               lineColInfo, maxResults);
 }
 
 uint64_t IonICEntry::realmID(JSRuntime* rt) const {
@@ -117,12 +136,27 @@ void* BaselineEntry::canonicalNativeAddrFor(void* ptr) const {
 
 uint32_t BaselineEntry::callStackAtAddr(void* ptr, const char** labelResults,
                                         uint32_t* sourceIdResults,
+                                        Maybe<LineColInfo>* lineColInfo,
                                         uint32_t maxResults) const {
   MOZ_ASSERT(containsPointer(ptr));
   MOZ_ASSERT(maxResults >= 1);
 
   labelResults[0] = str();
   sourceIdResults[0] = scriptSource().scriptSource->id();
+
+  if (script_->hasBaselineScript() &&
+      script_->baselineScript()->containsCodeAddress((uint8_t*)ptr)) {
+    jsbytecode* pc = script_->baselineScript()->approximatePcForNativeAddress(
+        script_, (uint8_t*)ptr);
+    JS::LimitedColumnNumberOneOrigin col;
+    uint32_t line = JS_PCToLineNumber(script_, pc, &col);
+
+    lineColInfo[0] = mozilla::Some(
+        LineColInfo{.line = line, .column = col.oneOriginValue()});
+  } else {
+    lineColInfo[0] = mozilla ::Nothing();
+  }
+
   return 1;
 }
 
@@ -130,10 +164,9 @@ void* BaselineInterpreterEntry::canonicalNativeAddrFor(void* ptr) const {
   return ptr;
 }
 
-uint32_t BaselineInterpreterEntry::callStackAtAddr(void* ptr,
-                                                   const char** labelResults,
-                                                   uint32_t* sourceIdResults,
-                                                   uint32_t maxResults) const {
+uint32_t BaselineInterpreterEntry::callStackAtAddr(
+    void* ptr, const char** labelResults, uint32_t* sourceIdResults,
+    Maybe<LineColInfo>* lineColInfo, uint32_t maxResults) const {
   MOZ_CRASH("shouldn't be called for BaselineInterpreter entries");
 }
 
@@ -156,12 +189,13 @@ bool RealmIndependentSharedEntry::callStackAtAddr(
 
 uint32_t RealmIndependentSharedEntry::callStackAtAddr(
     void* ptr, const char** labelResults, uint32_t* sourceIdResults,
-    uint32_t maxResults) const {
+    Maybe<LineColInfo>* lineColInfo, uint32_t maxResults) const {
   MOZ_ASSERT(containsPointer(ptr));
   MOZ_ASSERT(maxResults >= 1);
 
   labelResults[0] = str();
   sourceIdResults[0] = 0;
+  lineColInfo[0] = mozilla::Nothing();
   return 1;
 }
 
@@ -308,6 +342,7 @@ void JitcodeGlobalTable::traceWeak(JSRuntime* rt, JSTracer* trc) {
     if (TraceManuallyBarrieredWeakEdge(
             trc, entry->jitcodePtr(),
             "JitcodeGlobalTable::JitcodeGlobalEntry::jitcode_")) {
+      entry->traceWeak(trc);
       return false;
     }
 
@@ -339,26 +374,27 @@ bool JitcodeGlobalEntry::isJitcodeMarkedFromAnyThread(JSRuntime* rt) {
 uint32_t JitcodeGlobalEntry::callStackAtAddr(JSRuntime* rt, void* ptr,
                                              const char** labelResults,
                                              uint32_t* sourceIdResults,
+                                             Maybe<LineColInfo>* lineColInfo,
                                              uint32_t maxResults) const {
   switch (kind()) {
     case Kind::Ion:
       return asIon().callStackAtAddr(ptr, labelResults, sourceIdResults,
-                                     maxResults);
+                                     lineColInfo, maxResults);
     case Kind::IonIC:
       return asIonIC().callStackAtAddr(rt, ptr, labelResults, sourceIdResults,
-                                       maxResults);
+                                       lineColInfo, maxResults);
     case Kind::Baseline:
       return asBaseline().callStackAtAddr(ptr, labelResults, sourceIdResults,
-                                          maxResults);
+                                          lineColInfo, maxResults);
     case Kind::BaselineInterpreter:
       return asBaselineInterpreter().callStackAtAddr(
-          ptr, labelResults, sourceIdResults, maxResults);
+          ptr, labelResults, sourceIdResults, lineColInfo, maxResults);
     case Kind::Dummy:
-      return asDummy().callStackAtAddr(rt, ptr, labelResults, sourceIdResults,
-                                       maxResults);
+      return asDummy().callStackAtAddr(ptr, labelResults, sourceIdResults,
+                                       lineColInfo, maxResults);
     case Kind::RealmIndependentShared:
       return asRealmIndependentShared().callStackAtAddr(
-          ptr, labelResults, sourceIdResults, maxResults);
+          ptr, labelResults, sourceIdResults, lineColInfo, maxResults);
   }
   MOZ_CRASH("Invalid kind");
 }
@@ -381,7 +417,90 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
   MOZ_CRASH("Invalid kind");
 }
 
-bool JitcodeGlobalEntry::trace(JSTracer* trc) { return traceJitcode(trc); }
+bool IonEntry::trace(JSTracer* trc) {
+  bool tracedAny = false;
+
+  JSRuntime* rt = trc->runtime();
+  for (auto& entry : scriptList_) {
+    if (!IsMarkedUnbarriered(rt, entry.script)) {
+      TraceManuallyBarrieredEdge(trc, &entry.script,
+                                 "jitcodeglobaltable-ionentry-script");
+      tracedAny = true;
+    }
+  }
+
+  return tracedAny;
+}
+
+void IonEntry::traceWeak(JSTracer* trc) {
+  for (auto& entry : scriptList_) {
+    JSScript** scriptp = &entry.script;
+    MOZ_ALWAYS_TRUE(
+        TraceManuallyBarrieredWeakEdge(trc, scriptp, "IonEntry script"));
+  }
+}
+
+bool IonICEntry::trace(JSTracer* trc) {
+  IonEntry& entry = IonEntryForIonIC(trc->runtime(), this);
+  return entry.trace(trc);
+}
+
+void IonICEntry::traceWeak(JSTracer* trc) {
+  IonEntry& entry = IonEntryForIonIC(trc->runtime(), this);
+  entry.traceWeak(trc);
+}
+
+bool BaselineEntry::trace(JSTracer* trc) {
+  if (!IsMarkedUnbarriered(trc->runtime(), script_)) {
+    TraceManuallyBarrieredEdge(trc, &script_,
+                               "jitcodeglobaltable-baselineentry-script");
+    return true;
+  }
+  return false;
+}
+
+void BaselineEntry::traceWeak(JSTracer* trc) {
+  MOZ_ALWAYS_TRUE(
+      TraceManuallyBarrieredWeakEdge(trc, &script_, "BaselineEntry::script_"));
+}
+
+bool JitcodeGlobalEntry::trace(JSTracer* trc) {
+  bool tracedAny = traceJitcode(trc);
+  switch (kind()) {
+    case Kind::Ion:
+      tracedAny |= asIon().trace(trc);
+      break;
+    case Kind::IonIC:
+      tracedAny |= asIonIC().trace(trc);
+      break;
+    case Kind::Baseline:
+      tracedAny |= asBaseline().trace(trc);
+      break;
+    case Kind::BaselineInterpreter:
+    case Kind::Dummy:
+    case Kind::RealmIndependentShared:
+      break;
+  }
+  return tracedAny;
+}
+
+void JitcodeGlobalEntry::traceWeak(JSTracer* trc) {
+  switch (kind()) {
+    case Kind::Ion:
+      asIon().traceWeak(trc);
+      break;
+    case Kind::IonIC:
+      asIonIC().traceWeak(trc);
+      break;
+    case Kind::Baseline:
+      asBaseline().traceWeak(trc);
+      break;
+    case Kind::BaselineInterpreter:
+    case Kind::Dummy:
+    case Kind::RealmIndependentShared:
+      break;
+  }
+}
 
 void* JitcodeGlobalEntry::canonicalNativeAddrFor(JSRuntime* rt,
                                                  void* ptr) const {
@@ -968,17 +1087,18 @@ bool JitcodeIonTable::WriteIonTable(CompactBufferWriter& writer,
 }  // namespace jit
 }  // namespace js
 
-JS::ProfiledFrameHandle::ProfiledFrameHandle(JSRuntime* rt,
-                                             js::jit::JitcodeGlobalEntry& entry,
-                                             void* addr, const char* label,
-                                             uint32_t sourceId, uint32_t depth)
+JS::ProfiledFrameHandle::ProfiledFrameHandle(
+    JSRuntime* rt, js::jit::JitcodeGlobalEntry& entry, void* addr,
+    const char* label, uint32_t sourceId, uint32_t depth,
+    const mozilla::Maybe<js::jit::LineColInfo>& lineColInfo)
     : rt_(rt),
       entry_(entry),
       addr_(addr),
       canonicalAddr_(nullptr),
       label_(label),
       sourceId_(sourceId),
-      depth_(depth) {
+      depth_(depth),
+      lineColInfo_(lineColInfo) {
   if (!canonicalAddr_) {
     canonicalAddr_ = entry_.canonicalNativeAddrFor(rt_, addr_);
   }
@@ -1016,8 +1136,9 @@ JS_PUBLIC_API JS::ProfiledFrameRange JS::GetProfiledFrames(JSContext* cx,
   ProfiledFrameRange result(rt, addr, entry);
 
   if (entry) {
-    result.depth_ = entry->callStackAtAddr(
-        rt, addr, result.labels_, result.sourceIds_, std::size(result.labels_));
+    result.depth_ =
+        entry->callStackAtAddr(rt, addr, result.labels_, result.sourceIds_,
+                               result.lineColInfo_, std::size(result.labels_));
   }
   return result;
 }
@@ -1028,5 +1149,5 @@ JS::ProfiledFrameHandle JS::ProfiledFrameRange::Iter::operator*() const {
   uint32_t depth = range_.depth_ - 1 - index_;
   return ProfiledFrameHandle(range_.rt_, *range_.entry_, range_.addr_,
                              range_.labels_[depth], range_.sourceIds_[depth],
-                             depth);
+                             depth, range_.lineColInfo_[depth]);
 }

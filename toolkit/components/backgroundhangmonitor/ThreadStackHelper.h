@@ -91,7 +91,8 @@ class ThreadStackHelper : public ProfilerStackCollector {
    */
   virtual void SetIsMainThread() override;
   virtual void CollectNativeLeafAddr(void* aAddr) override;
-  virtual void CollectJitReturnAddr(void* aAddr) override;
+  virtual void CollectJitReturnAddr(void* aAddr, uint32_t aLine,
+                                    uint32_t aColumn) override;
   virtual void CollectWasmFrame(JS::ProfilingCategoryPair aCategory,
                                 const char* aLabel) override;
   virtual void CollectProfilingStackFrame(

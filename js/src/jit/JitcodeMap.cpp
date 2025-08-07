@@ -302,6 +302,7 @@ void JitcodeGlobalTable::traceWeak(JSRuntime* rt, JSTracer* trc) {
     if (TraceManuallyBarrieredWeakEdge(
             trc, entry->jitcodePtr(),
             "JitcodeGlobalTable::JitcodeGlobalEntry::jitcode_")) {
+      entry->traceWeak(trc);
       return false;
     }
 
@@ -369,7 +370,90 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
   MOZ_CRASH("Invalid kind");
 }
 
-bool JitcodeGlobalEntry::trace(JSTracer* trc) { return traceJitcode(trc); }
+bool IonEntry::trace(JSTracer* trc) {
+  bool tracedAny = false;
+
+  JSRuntime* rt = trc->runtime();
+  for (auto& entry : scriptList_) {
+    if (!IsMarkedUnbarriered(rt, entry.script)) {
+      TraceManuallyBarrieredEdge(trc, &entry.script,
+                                 "jitcodeglobaltable-ionentry-script");
+      tracedAny = true;
+    }
+  }
+
+  return tracedAny;
+}
+
+void IonEntry::traceWeak(JSTracer* trc) {
+  for (auto& entry : scriptList_) {
+    JSScript** scriptp = &entry.script;
+    MOZ_ALWAYS_TRUE(
+        TraceManuallyBarrieredWeakEdge(trc, scriptp, "IonEntry script"));
+  }
+}
+
+bool IonICEntry::trace(JSTracer* trc) {
+  IonEntry& entry = IonEntryForIonIC(trc->runtime(), this);
+  return entry.trace(trc);
+}
+
+void IonICEntry::traceWeak(JSTracer* trc) {
+  IonEntry& entry = IonEntryForIonIC(trc->runtime(), this);
+  entry.traceWeak(trc);
+}
+
+bool BaselineEntry::trace(JSTracer* trc) {
+  if (!IsMarkedUnbarriered(trc->runtime(), script_)) {
+    TraceManuallyBarrieredEdge(trc, &script_,
+                               "jitcodeglobaltable-baselineentry-script");
+    return true;
+  }
+  return false;
+}
+
+void BaselineEntry::traceWeak(JSTracer* trc) {
+  MOZ_ALWAYS_TRUE(
+      TraceManuallyBarrieredWeakEdge(trc, &script_, "BaselineEntry::script_"));
+}
+
+bool JitcodeGlobalEntry::trace(JSTracer* trc) {
+  bool tracedAny = traceJitcode(trc);
+  switch (kind()) {
+    case Kind::Ion:
+      tracedAny |= asIon().trace(trc);
+      break;
+    case Kind::IonIC:
+      tracedAny |= asIonIC().trace(trc);
+      break;
+    case Kind::Baseline:
+      tracedAny |= asBaseline().trace(trc);
+      break;
+    case Kind::BaselineInterpreter:
+    case Kind::Dummy:
+    case Kind::RealmIndependentShared:
+      break;
+  }
+  return tracedAny;
+}
+
+void JitcodeGlobalEntry::traceWeak(JSTracer* trc) {
+  switch (kind()) {
+    case Kind::Ion:
+      asIon().traceWeak(trc);
+      break;
+    case Kind::IonIC:
+      asIonIC().traceWeak(trc);
+      break;
+    case Kind::Baseline:
+      asBaseline().traceWeak(trc);
+      break;
+    case Kind::BaselineInterpreter:
+    case Kind::Dummy:
+    case Kind::RealmIndependentShared:
+      break;
+  }
+}
 
 void* JitcodeGlobalEntry::canonicalNativeAddrFor(JSRuntime* rt,
                                                  void* ptr) const {

@@ -23,6 +23,12 @@ namespace jit {
 class JitActivation;
 class JSJitProfilingFrameIterator;
 class JitcodeGlobalEntry;
+
+// Line and column information for JIT frames
+struct LineColInfo {
+  uint32_t line;
+  uint32_t column;
+};
 }  // namespace jit
 namespace wasm {
 class ProfilingFrameIterator;
@@ -163,6 +169,9 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
     uint64_t realmID;
     uint32_t sourceId;
 
+    // Line and column information for JIT frames (collected during sampling)
+    mozilla::Maybe<js::jit::LineColInfo> lineColInfo;
+
    public:
     void* returnAddress() const {
       MOZ_ASSERT(kind != Frame_BaselineInterpreter);
@@ -240,10 +249,12 @@ class MOZ_STACK_CLASS ProfiledFrameHandle {
   const char* label_;
   uint32_t sourceId_;
   uint32_t depth_;
+  mozilla::Maybe<js::jit::LineColInfo> lineColInfo_;
 
   ProfiledFrameHandle(JSRuntime* rt, js::jit::JitcodeGlobalEntry& entry,
                       void* addr, const char* label, uint32_t sourceId,
-                      uint32_t depth);
+                      uint32_t depth,
+                      const mozilla::Maybe<js::jit::LineColInfo>& lineColInfo);
 
  public:
   const char* label() const { return label_; }
@@ -255,6 +266,10 @@ class MOZ_STACK_CLASS ProfiledFrameHandle {
   JS_PUBLIC_API uint64_t realmID() const;
 
   JS_PUBLIC_API uint32_t sourceId() const;
+
+  const mozilla::Maybe<js::jit::LineColInfo>& lineColInfo() const {
+    return lineColInfo_;
+  }
 };
 
 class ProfiledFrameRange {
@@ -297,6 +312,7 @@ class ProfiledFrameRange {
   // Assume maximum inlining depth is <64
   const char* labels_[64];
   uint32_t sourceIds_[64];
+  mozilla::Maybe<js::jit::LineColInfo> lineColInfo_[64];
   uint32_t depth_;
 };
 

@@ -340,7 +340,8 @@ bool UniqueStacks::FrameKey::NormalFrameData::operator==(
 bool UniqueStacks::FrameKey::JITFrameData::operator==(
     const JITFrameData& aOther) const {
   return mCanonicalAddress == aOther.mCanonicalAddress &&
-         mDepth == aOther.mDepth && mRangeIndex == aOther.mRangeIndex;
+         mDepth == aOther.mDepth && mRangeIndex == aOther.mRangeIndex &&
+         mLine == aOther.mLine && mColumn == aOther.mColumn;
 }
 
 // Consume aJITFrameInfo by stealing its string table and its JIT frame info
@@ -417,7 +418,8 @@ UniqueStacks::LookupFramesForJITAddressFromBufferPos(void* aJITAddress,
   MOZ_RELEASE_ASSERT(frameKeys.initCapacity(jitFrameKeys->value().length()));
   for (const JITFrameKey& jitFrameKey : jitFrameKeys->value()) {
     FrameKey frameKey(jitFrameKey.mCanonicalAddress, jitFrameKey.mDepth,
-                      rangeIter - mJITInfoRanges.begin());
+                      rangeIter - mJITInfoRanges.begin(), jitFrameKey.mLine,
+                      jitFrameKey.mColumn);
     uint32_t index = mFrameToIndexMap.count();
     auto entry = mFrameToIndexMap.lookupForAdd(frameKey);
     if (!entry) {
@@ -592,6 +594,13 @@ static void StreamJITFrame(JSContext* aContext, SpliceableJSONWriter& aWriter,
                            ? MakeStringSpan("ion")
                            : MakeStringSpan("baseline"));
 
+  // Output line and column information if available
+  if (aJITFrame.lineColInfo().isSome()) {
+    const auto& lineColInfo = aJITFrame.lineColInfo().ref();
+    writer.IntElement(LINE, lineColInfo.line);
+    writer.IntElement(COLUMN, lineColInfo.column);
+  }
+
   const JS::ProfilingCategoryPairInfo& info = JS::GetProfilingCategoryPairInfo(
       frameKind == JS::ProfilingFrameIterator::Frame_Ion
           ? JS::ProfilingCategoryPair::JS_IonMonkey
@@ -647,7 +656,11 @@ void JITFrameInfo::AddInfoForRange(
       for (JS::ProfiledFrameHandle handle :
            JS::GetProfiledFrames(aCx, aJITAddress)) {
         uint32_t depth = jitFrameKeys.length();
-        JITFrameKey jitFrameKey{handle.canonicalAddress(), depth};
+        uint32_t line =
+            handle.lineColInfo().isSome() ? handle.lineColInfo()->line : 0;
+        uint32_t column =
+            handle.lineColInfo().isSome() ? handle.lineColInfo()->column : 0;
+        JITFrameKey jitFrameKey{handle.canonicalAddress(), depth, line, column};
         auto frameEntry = jitFrameToFrameJSONMap.lookupForAdd(jitFrameKey);
         if (!frameEntry) {
           if (!jitFrameToFrameJSONMap.add(
@@ -1487,6 +1500,19 @@ ProfilerThreadId ProfileBuffer::DoStreamSamplesAndMarkersToJSON(
 
             // A JIT frame may expand to multiple frames due to inlining.
             void* pc = e.Get().GetPtr();
+            e.Next();
+
+            // Skip any line/column information that may follow JitReturnAddr
+            // entries These were collected during sampling but will be handled
+            // via the JITFrameInfo system which already has this data from
+            // extractStack
+            if (e.Has() && e.Get().IsLineNumber()) {
+              e.Next();
+            }
+            if (e.Has() && e.Get().IsColumnNumber()) {
+              e.Next();
+            }
+
             const Maybe<Vector<UniqueStacks::FrameKey>>& frameKeys =
                 uniqueStacks.LookupFramesForJITAddressFromBufferPos(
                     pc, entryPosition ? entryPosition : e.CurPos());
@@ -1502,8 +1528,6 @@ ProfilerThreadId ProfileBuffer::DoStreamSamplesAndMarkersToJSON(
               }
               stack = *maybeStack;
             }
-
-            e.Next();
 
           } else {
             break;
@@ -1805,6 +1829,16 @@ void ProfileBuffer::AddJITInfoForRange(
               while (e.Has() && !e.Get().IsThreadId()) {
                 if (e.Get().IsJitReturnAddr()) {
                   aJITAddressConsumer(e.Get().GetPtr());
+                  e.Next();
+                  // Skip any LineNumber/ColumnNumber entries that follow
+                  // JitReturnAddr
+                  if (e.Has() && e.Get().IsLineNumber()) {
+                    e.Next();
+                  }
+                  if (e.Has() && e.Get().IsColumnNumber()) {
+                    e.Next();
+                  }
+                  continue;
                 }
                 e.Next();
               }
@@ -1833,6 +1867,18 @@ void ProfileBuffer::AddJITInfoForRange(
                     while (stackEntryGetter.Has()) {
                       if (stackEntryGetter.Get().IsJitReturnAddr()) {
                         aJITAddressConsumer(stackEntryGetter.Get().GetPtr());
+                        stackEntryGetter.Next();
+                        // Skip any LineNumber/ColumnNumber entries that follow
+                        // JitReturnAddr
+                        if (stackEntryGetter.Has() &&
+                            stackEntryGetter.Get().IsLineNumber()) {
+                          stackEntryGetter.Next();
+                        }
+                        if (stackEntryGetter.Has() &&
+                            stackEntryGetter.Get().IsColumnNumber()) {
+                          stackEntryGetter.Next();
+                        }
+                        continue;
                       }
                       stackEntryGetter.Next();
                     }

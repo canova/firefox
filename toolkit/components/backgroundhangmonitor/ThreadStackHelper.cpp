@@ -197,7 +197,8 @@ void ThreadStackHelper::CollectNativeLeafAddr(void* aAddr) {
   TryAppendFrame(HangEntryProgCounter(reinterpret_cast<uintptr_t>(aAddr)));
 }
 
-void ThreadStackHelper::CollectJitReturnAddr(void* aAddr) {
+void ThreadStackHelper::CollectJitReturnAddr(void* aAddr, uint32_t aLine,
+                                             uint32_t aColumn) {
   MOZ_RELEASE_ASSERT(mStackToFill);
   TryAppendFrame(HangEntryJit());
 }

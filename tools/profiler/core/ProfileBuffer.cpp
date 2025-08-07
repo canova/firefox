@@ -192,8 +192,16 @@ void ProfileBufferCollector::CollectNativeLeafAddr(void* aAddr) {
   mBuf.AddEntry(ProfileBufferEntry::NativeLeafAddr(aAddr));
 }
 
-void ProfileBufferCollector::CollectJitReturnAddr(void* aAddr) {
+void ProfileBufferCollector::CollectJitReturnAddr(void* aAddr, uint32_t aLine,
+                                                  uint32_t aColumn) {
   mBuf.AddEntry(ProfileBufferEntry::JitReturnAddr(aAddr));
+
+  if (aLine > 0) {
+    mBuf.AddEntry(ProfileBufferEntry::LineNumber(aLine));
+  }
+  if (aColumn > 0) {
+    mBuf.AddEntry(ProfileBufferEntry::ColumnNumber(aColumn));
+  }
 }
 
 void ProfileBufferCollector::CollectWasmFrame(

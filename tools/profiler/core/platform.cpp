@@ -2492,7 +2492,14 @@ static void MergeStacks(
       } else {
         MOZ_ASSERT(jsFrame.kind == JS::ProfilingFrameIterator::Frame_Ion ||
                    jsFrame.kind == JS::ProfilingFrameIterator::Frame_Baseline);
-        aCollector.CollectJitReturnAddr(jsFrame.returnAddress());
+
+        // Always use enhanced CollectJitReturnAddr with line number information
+        // If lineColInfo is Nothing, line/column will be 0
+        uint32_t line =
+            jsFrame.lineColInfo.isSome() ? jsFrame.lineColInfo->line : 0;
+        uint32_t column =
+            jsFrame.lineColInfo.isSome() ? jsFrame.lineColInfo->column : 0;
+        aCollector.CollectJitReturnAddr(jsFrame.returnAddress(), line, column);
       }
 
       jsIndex--;

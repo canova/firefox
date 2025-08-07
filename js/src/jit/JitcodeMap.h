@@ -34,6 +34,7 @@ class GCMarker;
 
 namespace jit {
 
+struct LineColInfo;
 class InlineScriptTree;
 
 /*
@@ -191,6 +192,7 @@ class JitcodeGlobalEntry : public JitCodeRange {
   bool isJitcodeMarkedFromAnyThread(JSRuntime* rt);
 
   bool trace(JSTracer* trc);
+  void traceWeak(JSTracer* trc);
   uint64_t realmID(JSRuntime* rt) const;
   void* canonicalNativeAddrFor(JSRuntime* rt, void* ptr) const;
 
@@ -199,6 +201,7 @@ class JitcodeGlobalEntry : public JitCodeRange {
   // outermost appended last.
   uint32_t callStackAtAddr(JSRuntime* rt, void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const;
 };
 
@@ -235,10 +238,11 @@ struct ScriptSourceAndExtent {
 class IonEntry : public JitcodeGlobalEntry {
  public:
   struct ScriptListEntry {
+    JSScript* script;
     ScriptSourceAndExtent sourceAndExtent;
     UniqueChars str;
     ScriptListEntry(JSScript* script, UniqueChars str)
-        : sourceAndExtent(script), str(std::move(str)) {}
+        : script(script), sourceAndExtent(script), str(std::move(str)) {}
   };
 
   using ScriptList = Vector<ScriptListEntry, 2, SystemAllocPolicy>;
@@ -272,6 +276,11 @@ class IonEntry : public JitcodeGlobalEntry {
 
   size_t numScripts() const { return scriptList_.length(); }
 
+  JSScript* getScript(unsigned idx) const {
+    MOZ_ASSERT(idx < numScripts());
+    return scriptList_[idx].script;
+  }
+
   const ScriptSourceAndExtent& getScriptSource(unsigned idx) const {
     MOZ_ASSERT(idx < numScripts());
     return scriptList_[idx].sourceAndExtent;
@@ -288,11 +297,13 @@ class IonEntry : public JitcodeGlobalEntry {
 
   uint32_t callStackAtAddr(void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const;
 
   uint64_t realmID() const { return realmId_; }
 
   bool trace(JSTracer* trc);
+  void traceWeak(JSTracer* trc);
 };
 
 class IonICEntry : public JitcodeGlobalEntry {
@@ -314,14 +325,17 @@ class IonICEntry : public JitcodeGlobalEntry {
 
   uint32_t callStackAtAddr(JSRuntime* rt, void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const;
 
   uint64_t realmID(JSRuntime* rt) const;
 
   bool trace(JSTracer* trc);
+  void traceWeak(JSTracer* trc);
 };
 
 class BaselineEntry : public JitcodeGlobalEntry {
+  JSScript* script_;
   ScriptSourceAndExtent scriptSource_;
   UniqueChars str_;
   uint64_t realmId_;
@@ -331,12 +345,15 @@ class BaselineEntry : public JitcodeGlobalEntry {
                 JSScript* script, UniqueChars str, uint64_t realmId)
       : JitcodeGlobalEntry(Kind::Baseline, code, nativeStartAddr,
                            nativeEndAddr),
+        script_(script),
         scriptSource_(script),
         str_(std::move(str)),
         realmId_(realmId) {
+    MOZ_ASSERT(script_);
     MOZ_ASSERT(str_);
   }
 
+  JSScript* script() const { return script_; }
   const ScriptSourceAndExtent& scriptSource() const { return scriptSource_; }
 
   const char* str() const { return str_.get(); }
@@ -345,11 +362,13 @@ class BaselineEntry : public JitcodeGlobalEntry {
 
   uint32_t callStackAtAddr(void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const;
 
   uint64_t realmID() const { return realmId_; }
 
   bool trace(JSTracer* trc);
+  void traceWeak(JSTracer* trc);
 };
 
 class RealmIndependentSharedEntry : public JitcodeGlobalEntry {
@@ -373,6 +392,7 @@ class RealmIndependentSharedEntry : public JitcodeGlobalEntry {
 
   uint32_t callStackAtAddr(void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const;
 
   uint64_t realmID() const;
@@ -389,6 +409,7 @@ class BaselineInterpreterEntry : public JitcodeGlobalEntry {
 
   uint32_t callStackAtAddr(void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const;
 
   uint64_t realmID() const;
@@ -406,8 +427,9 @@ class DummyEntry : public JitcodeGlobalEntry {
     return nullptr;
   }
 
-  uint32_t callStackAtAddr(JSRuntime* rt, void* ptr, const char** labelResults,
+  uint32_t callStackAtAddr(void* ptr, const char** labelResults,
                            uint32_t* sourceIdResults,
+                           mozilla::Maybe<LineColInfo>* lineColInfo,
                            uint32_t maxResults) const {
     return 0;
   }

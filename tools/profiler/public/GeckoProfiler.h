@@ -259,7 +259,8 @@ class ProfilerStackCollector {
 
   virtual void CollectNativeLeafAddr(void* aAddr) = 0;
 
-  virtual void CollectJitReturnAddr(void* aAddr) = 0;
+  virtual void CollectJitReturnAddr(void* aAddr, uint32_t aLine,
+                                    uint32_t aColumn) = 0;
 
   virtual void CollectWasmFrame(JS::ProfilingCategoryPair aCategory,
                                 const char* aLabel) = 0;

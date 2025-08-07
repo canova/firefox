@@ -64,6 +64,22 @@ uint32_t IonEntry::callStackAtAddr(void* ptr, CallStackFrameInfo* results,
 
     results[count].label = getStr(scriptIdx);
     results[count].sourceId = getScriptSource(scriptIdx).scriptSource->id();
+
+    // Calculate line numbers during sampling
+    // For the first entry (innermost frame), use precise PC offset from
+    // delta-run
+    if (count == 0) {
+      pcOffset = region.findPcOffset(ptrOffset, pcOffset);
+    }
+    JSScript* script = getScript(scriptIdx);
+    jsbytecode* pc = script->offsetToPC(pcOffset);
+    MOZ_ASSERT(BytecodeLocation(script, pc).isValid());
+
+    JS::LimitedColumnNumberOneOrigin col;
+    uint32_t line = JS_PCToLineNumber(script, pc, &col);
+    results[count].line = line;
+    results[count].column = col.oneOriginValue();
+
     count++;
     if (count >= maxResults) {
       break;
@@ -120,6 +136,21 @@ uint32_t BaselineEntry::callStackAtAddr(void* ptr, CallStackFrameInfo* results,
 
   results[0].label = str();
   results[0].sourceId = scriptSource().scriptSource->id();
+
+  if (script_->hasBaselineScript() &&
+      script_->baselineScript()->containsCodeAddress((uint8_t*)ptr)) {
+    jsbytecode* pc = script_->baselineScript()->approximatePcForNativeAddress(
+        script_, (uint8_t*)ptr);
+    JS::LimitedColumnNumberOneOrigin col;
+    uint32_t line = JS_PCToLineNumber(script_, pc, &col);
+
+    results[0].line = line;
+    results[0].column = col.oneOriginValue();
+  } else {
+    results[0].line = 0;
+    results[0].column = 0;
+  }
+
   return 1;
 }
 
@@ -157,6 +188,8 @@ uint32_t RealmIndependentSharedEntry::callStackAtAddr(
 
   results[0].label = str();
   results[0].sourceId = 0;
+  results[0].line = 0;
+  results[0].column = 0;
   return 1;
 }
 

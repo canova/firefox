@@ -9,6 +9,7 @@
 #include "GeckoProfiler.h"
 #include "ProfileBufferEntry.h"
 
+#include "mozilla/HashTable.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PowerOfTwo.h"
 #include "mozilla/ProfileBufferChunkManagerSingle.h"
@@ -16,6 +17,8 @@
 
 class ProcessStreamingContext;
 class RunningTimes;
+
+struct ProfilerJSSourceData;
 
 // Class storing most profiling data in a ProfileChunkedBuffer.
 //
@@ -95,6 +98,13 @@ class ProfileBuffer final {
                             const mozilla::TimeStamp& aProcessStartTime,
                             double aSinceTime,
                             mozilla::ProgressLogger aProgressLogger) const;
+
+  // Stream JavaScript source table to JSON and return mapping from sourceId
+  // to index into source table.
+  mozilla::HashMap<uint32_t, uint32_t> StreamSourceTableToJSON(
+      SpliceableJSONWriter& aWriter,
+      const mozilla::HashMap<nsCString, ProfilerJSSourceData>& aJSSourcesByUUID)
+      const;
 
   // Find (via |aLastSample|) the most recent sample for the thread denoted by
   // |aThreadId| and clone it, patching in the current time as appropriate.

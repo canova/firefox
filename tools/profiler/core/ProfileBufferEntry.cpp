@@ -2512,5 +2512,61 @@ void ProfileBuffer::DiscardSamplesBeforeTime(double aTime) {
   Unused << aTime;
 }
 
+mozilla::HashMap<uint32_t, uint32_t> ProfileBuffer::StreamSourceTableToJSON(
+    SpliceableJSONWriter& aWriter,
+    const mozilla::HashMap<nsCString, ProfilerJSSourceData>& aJSSourcesByUUID)
+    const {
+  enum Schema : uint32_t { UUID = 0, FILENAME = 1 };
+  mozilla::HashMap<uint32_t, uint32_t> sourceIdToIndexMap;
+
+  aWriter.StartObjectProperty("sources");
+  {
+    // Write the schema
+    {
+      JSONSchemaWriter schema(aWriter);
+      schema.WriteField("uuid");
+      schema.WriteField("filename");
+    }
+
+    // Write data array and build sourceId-to-index mapping
+    aWriter.StartArrayProperty("data");
+    uint32_t index = 0;
+    for (auto iter = aJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
+      const nsCString& uuid = iter.get().key();
+      const ProfilerJSSourceData& sourceData = iter.get().value();
+
+      // Build sourceId-to-index mapping
+      if (sourceData.sourceId() != 0) {
+        MOZ_ASSERT(!sourceIdToIndexMap.has(sourceData.sourceId()),
+                   "Duplicate sourceId detected! This indicates sourceId "
+                   "collision between different sources.");
+        if (!sourceIdToIndexMap.put(sourceData.sourceId(), index)) {
+          // OOM, return.
+          aWriter.SourceFailureLatch().SetFailure(
+              "OOM in ProfileBuffer::StreamSourceTableToJSON");
+          return sourceIdToIndexMap;
+        }
+      }
+
+      // Write [uuid, filename] entry
+      aWriter.StartArrayElement();
+      {
+        // TODO: Use AutoArraySchemaWithStringsWriter to write string indexes
+        // into string table once we have "process global" string table.
+        // Currently string tables are per-thread.
+        aWriter.StringElement(MakeStringSpan(uuid.get()));
+        aWriter.StringElement(MakeStringSpan(sourceData.filePath()));
+      }
+      aWriter.EndArray();
+
+      index++;
+    }
+    aWriter.EndArray();
+  }
+  aWriter.EndObject();
+
+  return sourceIdToIndexMap;
+}
+
 // END ProfileBuffer
 ////////////////////////////////////////////////////////////////////////

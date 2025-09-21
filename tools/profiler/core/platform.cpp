@@ -3832,6 +3832,7 @@ locked_profiler_stream_json_for_this_process(
   // threads. This creates the sources table and UUID mappings needed for frame
   // serialization
   JSSourcesByUUID jsSourcesByUUID;
+  Maybe<mozilla::HashMap<uint32_t, uint32_t>> sourceIdToIndexMap;
 
   if (ProfilerFeature::HasJSSources(ActivePS::Features(aLock))) {
     ThreadRegistry::LockedRegistry lockedRegistry;
@@ -3860,6 +3861,10 @@ locked_profiler_stream_json_for_this_process(
         }
       }
     }
+
+    // Stream sources table and get sourceId-to-index mapping
+    sourceIdToIndexMap.emplace(
+        buffer.StreamSourceTableToJSON(aWriter, jsSourcesByUUID));
   }
 
   // Lists the samples for each thread profile

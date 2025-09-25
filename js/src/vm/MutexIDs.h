@@ -37,7 +37,6 @@
   _(GeckoProfilerScriptSources, 499)  \
   _(StringsCache, 500)                \
   _(FutexThread, 500)                 \
-  _(GeckoProfilerStrings, 500)        \
   _(ProtectedRegionTree, 500)         \
   _(ShellOffThreadState, 500)         \
   _(ShellStreamCacheEntryState, 500)  \

@@ -427,6 +427,10 @@ class ScriptSource {
                 UncompressedSourceCache::AutoHoldEntry& holder, size_t begin,
                 size_t len);
 
+    PinnedUnits(ScriptSource* source,
+                UncompressedSourceCache::AutoHoldEntry& holder, size_t begin,
+                size_t len);
+
     ~PinnedUnits();
 
     const Unit* get() const { return units_; }
@@ -621,6 +625,9 @@ class ScriptSource {
   static mozilla::Atomic<uint32_t, mozilla::SequentiallyConsistent> idCount_;
 
   template <typename Unit>
+  EntryUnits<Unit> chunkUnitsNoContext(size_t chunk);
+
+  template <typename Unit>
   const Unit* chunkUnits(JSContext* cx,
                          UncompressedSourceCache::AutoHoldEntry& holder,
                          size_t chunk);
@@ -633,6 +640,10 @@ class ScriptSource {
   template <typename Unit>
   const Unit* units(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& asp,
                     size_t begin, size_t len);
+
+  template <typename Unit>
+  const Unit* unitsNoContext(UncompressedSourceCache::AutoHoldEntry& holder,
+                             size_t begin, size_t len);
 
   template <typename Unit>
   const Unit* uncompressedUnits(size_t begin, size_t len);

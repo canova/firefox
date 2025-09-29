@@ -3856,7 +3856,7 @@ locked_profiler_stream_json_for_this_process(
       for (ProfilerJSSourceData& sourceData : threadSources) {
         // Generate UUID for this source and store it in the global map.
         if (!jsSourcesByUUID.put(NSID_TrimBracketsASCII(nsID::GenerateUUID()),
-                                 std::move(sourceData))) {
+                                 JSSourceDataVariant(std::move(sourceData)))) {
           return Err(ProfilerError::JsonGenerationFailed);
         }
       }

@@ -19,6 +19,7 @@
 #include "js/Utility.h"
 #include "js/ProfilingSources.h"
 #include "mozilla/Unused.h"
+#include "mozilla/Variant.h"
 #include "nsString.h"
 #include "mozilla/HashTable.h"
 #include "nsTStringHasher.h"
@@ -32,13 +33,101 @@ struct ParamTraits;
 
 namespace mozilla {
 
-// Maps UUID strings to JS source data for WebChannel requests
-using JSSourcesByUUID = mozilla::HashMap<nsCString, ProfilerJSSourceData>;
+// Ergonomic version of ProfilerJSSourceData for IPC serialization
+struct ErgonomicProfilerJSSourceData {
+  uint32_t sourceId;
+  nsCString filePath;
+  Maybe<Variant<nsString, nsCString, ProfilerJSSourceData::RetrievableFile>>
+      source;
 
-// This structure contains additional information gathered while generating the
-// profile json and iterating the buffer.
+  ErgonomicProfilerJSSourceData() = default;
+
+  // Constructor from ProfilerJSSourceData
+  explicit ErgonomicProfilerJSSourceData(const ProfilerJSSourceData& aData)
+      : sourceId(aData.sourceId()) {
+    if (aData.filePathLength() > 0) {
+      filePath.Assign(aData.filePath(), aData.filePathLength());
+    }
+
+    aData.data().match(
+        [&](const ProfilerJSSourceData::SourceTextUTF16& srcText) {
+          // Use nsDependentString to wrap the existing UTF-16 data without
+          // copying
+          source = Some(Variant<nsString, nsCString,
+                                ProfilerJSSourceData::RetrievableFile>(
+              nsString(nsDependentString(
+                  reinterpret_cast<const char16_t*>(srcText.chars_.get()),
+                  srcText.length_))));
+        },
+        [&](const ProfilerJSSourceData::SourceTextUTF8& srcText) {
+          // Use nsDependentCString to wrap the existing UTF-8 data without
+          // copying
+          source =
+              Some(Variant<nsString, nsCString,
+                           ProfilerJSSourceData::RetrievableFile>(nsCString(
+                  nsDependentCString(srcText.chars_.get(), srcText.length_))));
+        },
+        [&](const ProfilerJSSourceData::RetrievableFile&) {
+          source = Some(Variant<nsString, nsCString,
+                                ProfilerJSSourceData::RetrievableFile>(
+              ProfilerJSSourceData::RetrievableFile{}));
+        },
+        [&](const ProfilerJSSourceData::Unavailable&) {
+          // source remains None for unavailable sources
+        });
+  }
+
+  // No copy constructors/assignment
+  ErgonomicProfilerJSSourceData(const ErgonomicProfilerJSSourceData&) = delete;
+  ErgonomicProfilerJSSourceData& operator=(
+      const ErgonomicProfilerJSSourceData&) = delete;
+
+  // Move constructors/assignment
+  ErgonomicProfilerJSSourceData(ErgonomicProfilerJSSourceData&&) = default;
+  ErgonomicProfilerJSSourceData& operator=(ErgonomicProfilerJSSourceData&&) =
+      default;
+
+  size_t SizeOf() const {
+    // Size of sourceId + filepath
+    size_t size = sizeof(uint32_t) + filePath.Length();
+    if (source.isSome()) {
+      source->match(
+          [&](const nsString& str) { size += str.Length() * sizeof(char16_t); },
+          [&](const nsCString& str) { size += str.Length(); },
+          [&](const ProfilerJSSourceData::RetrievableFile&) {
+            /* no extra size */
+          });
+    }
+    return size;
+  }
+};
+
+// Variant that can hold either the original ProfilerJSSourceData or the
+// ergonomic version
+using JSSourceDataVariant =
+    mozilla::Variant<ProfilerJSSourceData, ErgonomicProfilerJSSourceData>;
+
+// Maps UUID strings to JS source data for WebChannel requests
+using JSSourcesByUUID = mozilla::HashMap<nsCString, JSSourceDataVariant>;
+
+// This structure contains additional information gathered while generating
+// the profile json and iterating the buffer.
 struct ProfileGenerationAdditionalInformation {
   ProfileGenerationAdditionalInformation() = default;
+  // Constructor for compatibility with existing code that passes
+  // ProfilerJSSourceData
+  explicit ProfileGenerationAdditionalInformation(
+      SharedLibraryInfo&& aSharedLibraries,
+      mozilla::HashMap<nsCString, ProfilerJSSourceData>&& aJSSourcesByUUID)
+      : mSharedLibraries(std::move(aSharedLibraries)) {
+    // Convert ProfilerJSSourceData to variant form
+    for (auto iter = aJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
+      mozilla::Unused << mJSSourcesByUUID.put(
+          iter.get().key(), JSSourceDataVariant(std::move(iter.get().value())));
+    }
+  }
+
+  // Constructor that accepts the variant type directly
   explicit ProfileGenerationAdditionalInformation(
       SharedLibraryInfo&& aSharedLibraries, JSSourcesByUUID&& aJSSourcesByUUID)
       : mSharedLibraries(std::move(aSharedLibraries)),
@@ -49,9 +138,23 @@ struct ProfileGenerationAdditionalInformation {
 
     for (auto iter = mJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
       const nsCString& uuid = iter.get().key();
-      const ProfilerJSSourceData& sourceData = iter.get().value();
+      const JSSourceDataVariant& sourceData = iter.get().value();
       size += uuid.Length();
-      size += sourceData.SizeOf();
+
+      sourceData.match(
+          [&](const ProfilerJSSourceData& data) { size += data.SizeOf(); },
+          [&](const ErgonomicProfilerJSSourceData& data) {
+            size += sizeof(uint32_t) + data.filePath.Length();
+            if (data.source.isSome()) {
+              data.source->match(
+                  [&](const nsString& str) {
+                    size += str.Length() * sizeof(char16_t);
+                  },
+                  [&](const nsCString& str) { size += str.Length(); },
+                  [&](const ProfilerJSSourceData::
+                          RetrievableFile&) { /* no extra size */ });
+            }
+          });
     }
 
     return size;
@@ -86,6 +189,8 @@ struct ProfileGenerationAdditionalInformation {
  private:
   JSString* CreateJSStringFromSourceData(
       JSContext* aCx, const ProfilerJSSourceData& aSourceData) const;
+  JSString* CreateJSStringFromErgonomicData(
+      JSContext* aCx, const ErgonomicProfilerJSSourceData& aData) const;
 
   SharedLibraryInfo mSharedLibraries;
   JSSourcesByUUID mJSSourcesByUUID;

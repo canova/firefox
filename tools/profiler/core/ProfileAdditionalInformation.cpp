@@ -42,6 +42,33 @@ mozilla::ProfileGenerationAdditionalInformation::CreateJSStringFromSourceData(
       });
 }
 
+JSString* mozilla::ProfileGenerationAdditionalInformation::
+    CreateJSStringFromErgonomicData(
+        JSContext* aCx, const ErgonomicProfilerJSSourceData& aData) const {
+  if (!aData.source.isSome()) {
+    return JS_NewStringCopyZ(aCx, "[unavailable]");
+  }
+
+  return aData.source->match(
+      [&](const nsString& str) -> JSString* {
+        return JS_NewUCStringCopyN(aCx, str.get(), str.Length());
+      },
+      [&](const nsCString& str) -> JSString* {
+        return JS_NewStringCopyN(aCx, str.get(), str.Length());
+      },
+      [&](const ProfilerJSSourceData::RetrievableFile&) -> JSString* {
+        ProfilerJSSourceData retrievedData =
+            js::RetrieveProfilerSourceContent(aCx, aData.filePath.get());
+
+        const auto& data = retrievedData.data();
+        MOZ_RELEASE_ASSERT(data.is<ProfilerJSSourceData::SourceTextUTF8>(),
+                           "Retrieved JS source has to be utf-8");
+
+        const auto& srcText = data.as<ProfilerJSSourceData::SourceTextUTF8>();
+        return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
+      });
+}
+
 void mozilla::ProfileGenerationAdditionalInformation::ToJSValue(
     JSContext* aCx, JS::MutableHandle<JS::Value> aRetVal) const {
   // Get the shared libraries array.
@@ -64,9 +91,16 @@ void mozilla::ProfileGenerationAdditionalInformation::ToJSValue(
   if (jsSourcesObj) {
     for (auto iter = mJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
       const nsCString& uuid = iter.get().key();
-      const ProfilerJSSourceData& sourceData = iter.get().value();
+      const JSSourceDataVariant& sourceData = iter.get().value();
 
-      JSString* sourceStr = CreateJSStringFromSourceData(aCx, sourceData);
+      JSString* sourceStr = sourceData.match(
+          [&](const ProfilerJSSourceData& data) -> JSString* {
+            return CreateJSStringFromSourceData(aCx, data);
+          },
+          [&](const ErgonomicProfilerJSSourceData& data) -> JSString* {
+            return CreateJSStringFromErgonomicData(aCx, data);
+          });
+
       if (sourceStr) {
         JS::Rooted<JS::Value> sourceVal(aCx, JS::StringValue(sourceStr));
         JS_SetProperty(aCx, jsSourcesObj, PromiseFlatCString(uuid).get(),
@@ -102,8 +136,19 @@ struct ParamTraits<SharedLibraryInfo> {
 };
 
 template <>
-struct ParamTraits<ProfilerJSSourceData> {
-  typedef ProfilerJSSourceData paramType;
+struct ParamTraits<ProfilerJSSourceData::RetrievableFile> {
+  typedef ProfilerJSSourceData::RetrievableFile paramType;
+
+  // Empty struct, nothing to write
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {}
+
+  // Empty struct, nothing to read
+  static bool Read(MessageReader* aReader, paramType* aResult) { return true; }
+};
+
+template <>
+struct ParamTraits<mozilla::ErgonomicProfilerJSSourceData> {
+  typedef mozilla::ErgonomicProfilerJSSourceData paramType;
 
   static void Write(MessageWriter* aWriter, const paramType& aParam);
   static bool Read(MessageReader* aReader, paramType* aResult);
@@ -150,139 +195,18 @@ bool IPC::ParamTraits<SharedLibraryInfo>::Read(MessageReader* aReader,
   return ReadParam(aReader, &aResult->mEntries);
 }
 
-// Type tags for ProfilerJSSourceData IPC serialization
-constexpr uint8_t kSourceTextUTF16Tag = 0;
-constexpr uint8_t kSourceTextUTF8Tag = 1;
-constexpr uint8_t kRetrievableFileTag = 2;
-constexpr uint8_t kUnavailableTag = 3;
-
-void IPC::ParamTraits<ProfilerJSSourceData>::Write(MessageWriter* aWriter,
-                                                   const paramType& aParam) {
-  // Write sourceId and filePath first
-  WriteParam(aWriter, aParam.sourceId());
-  WriteParam(aWriter, aParam.filePathLength());
-  if (aParam.filePathLength() > 0) {
-    aWriter->WriteBytes(aParam.filePath(),
-                        aParam.filePathLength() * sizeof(char));
-  }
-
-  // Then write the specific data type
-  aParam.data().match(
-      [&](const ProfilerJSSourceData::SourceTextUTF16& srcText) {
-        WriteParam(aWriter, kSourceTextUTF16Tag);
-        WriteParam(aWriter, srcText.length_);
-        if (srcText.length_ > 0) {
-          aWriter->WriteBytes(srcText.chars_.get(),
-                              srcText.length_ * sizeof(char16_t));
-        }
-      },
-      [&](const ProfilerJSSourceData::SourceTextUTF8& srcText) {
-        WriteParam(aWriter, kSourceTextUTF8Tag);
-        WriteParam(aWriter, srcText.length_);
-        if (srcText.length_ > 0) {
-          aWriter->WriteBytes(srcText.chars_.get(),
-                              srcText.length_ * sizeof(char));
-        }
-      },
-      [&](const ProfilerJSSourceData::RetrievableFile&) {
-        WriteParam(aWriter, kRetrievableFileTag);
-      },
-      [&](const ProfilerJSSourceData::Unavailable&) {
-        WriteParam(aWriter, kUnavailableTag);
-      });
+void IPC::ParamTraits<mozilla::ErgonomicProfilerJSSourceData>::Write(
+    MessageWriter* aWriter, const paramType& aParam) {
+  WriteParam(aWriter, aParam.sourceId);
+  WriteParam(aWriter, aParam.filePath);
+  WriteParam(aWriter, aParam.source);
 }
 
-bool IPC::ParamTraits<ProfilerJSSourceData>::Read(MessageReader* aReader,
-                                                  paramType* aResult) {
-  // Read sourceId and filePath first
-  uint32_t sourceId;
-  size_t pathLength;
-  if (!ReadParam(aReader, &sourceId) || !ReadParam(aReader, &pathLength)) {
-    return false;
-  }
-
-  // Read filePath if present
-  JS::UniqueChars filePath;
-  if (pathLength > 0) {
-    char* chars =
-        static_cast<char*>(js_malloc((pathLength + 1) * sizeof(char)));
-    if (!chars || !aReader->ReadBytesInto(chars, pathLength * sizeof(char))) {
-      js_free(chars);
-      return false;
-    }
-    chars[pathLength] = '\0';
-    filePath.reset(chars);
-  }
-
-  // Then read the specific data type
-  uint8_t typeTag;
-  if (!ReadParam(aReader, &typeTag)) {
-    return false;
-  }
-
-  switch (typeTag) {
-    case kSourceTextUTF16Tag: {
-      size_t length;
-      if (!ReadParam(aReader, &length)) {
-        return false;
-      }
-      if (length > 0) {
-        // Allocate one extra element for null terminator
-        char16_t* chars =
-            static_cast<char16_t*>(js_malloc((length + 1) * sizeof(char16_t)));
-        if (!chars ||
-            !aReader->ReadBytesInto(chars, length * sizeof(char16_t))) {
-          js_free(chars);
-          return false;
-        }
-        // Ensure null termination
-        chars[length] = u'\0';
-        *aResult =
-            ProfilerJSSourceData(sourceId, JS::UniqueTwoByteChars(chars),
-                                 length, std::move(filePath), pathLength);
-      } else {
-        *aResult = ProfilerJSSourceData(sourceId, JS::UniqueTwoByteChars(), 0,
-                                        std::move(filePath), pathLength);
-      }
-      return true;
-    }
-    case kSourceTextUTF8Tag: {
-      size_t length;
-      if (!ReadParam(aReader, &length)) {
-        return false;
-      }
-      if (length > 0) {
-        // Allocate one extra byte for null terminator
-        char* chars =
-            static_cast<char*>(js_malloc((length + 1) * sizeof(char)));
-        if (!chars || !aReader->ReadBytesInto(chars, length * sizeof(char))) {
-          js_free(chars);
-          return false;
-        }
-        // Ensure null termination
-        chars[length] = '\0';
-        *aResult =
-            ProfilerJSSourceData(sourceId, JS::UniqueChars(chars), length,
-                                 std::move(filePath), pathLength);
-      } else {
-        *aResult = ProfilerJSSourceData(sourceId, JS::UniqueChars(), 0,
-                                        std::move(filePath), pathLength);
-      }
-      return true;
-    }
-    case kRetrievableFileTag: {
-      *aResult = ProfilerJSSourceData::CreateRetrievableFile(
-          sourceId, std::move(filePath), pathLength);
-      return true;
-    }
-    case kUnavailableTag: {
-      *aResult =
-          ProfilerJSSourceData(sourceId, std::move(filePath), pathLength);
-      return true;
-    }
-    default:
-      return false;
-  }
+bool IPC::ParamTraits<mozilla::ErgonomicProfilerJSSourceData>::Read(
+    MessageReader* aReader, paramType* aResult) {
+  return ReadParam(aReader, &aResult->sourceId) &&
+         ReadParam(aReader, &aResult->filePath) &&
+         ReadParam(aReader, &aResult->source);
 }
 
 void IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Write(
@@ -292,9 +216,18 @@ void IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Write(
   WriteParam(aWriter, static_cast<uint32_t>(aParam.mJSSourcesByUUID.count()));
   for (auto iter = aParam.mJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
     const nsCString& uuid = iter.get().key();
-    const ProfilerJSSourceData& sourceData = iter.get().value();
+    const JSSourceDataVariant& sourceData = iter.get().value();
     WriteParam(aWriter, uuid);
-    WriteParam(aWriter, sourceData);
+
+    // Always serialize as ErgonomicProfilerJSSourceData for IPC
+    sourceData.match(
+        [&](const ProfilerJSSourceData& data) {
+          mozilla::ErgonomicProfilerJSSourceData ergonomicData(data);
+          WriteParam(aWriter, ergonomicData);
+        },
+        [&](const ErgonomicProfilerJSSourceData& data) {
+          WriteParam(aWriter, data);
+        });
   }
 }
 
@@ -311,11 +244,14 @@ bool IPC::ParamTraits<mozilla::ProfileGenerationAdditionalInformation>::Read(
 
   for (uint32_t i = 0; i < numSources; ++i) {
     nsCString uuid;
-    ProfilerJSSourceData sourceData;
-    if (!ReadParam(aReader, &uuid) || !ReadParam(aReader, &sourceData)) {
+    mozilla::ErgonomicProfilerJSSourceData ergonomicData;
+    if (!ReadParam(aReader, &uuid) || !ReadParam(aReader, &ergonomicData)) {
       return false;
     }
-    if (!aResult->mJSSourcesByUUID.put(uuid, std::move(sourceData))) {
+    // Store as ErgonomicProfilerJSSourceData in the variant (IPC
+    // deserialization gives us owned strings)
+    if (!aResult->mJSSourcesByUUID.put(
+            uuid, JSSourceDataVariant(std::move(ergonomicData)))) {
       return false;
     }
   }

@@ -106,7 +106,7 @@ class ProfileBuffer final {
   // to index into source table.
   mozilla::HashMap<uint32_t, uint32_t> StreamSourceTableToJSON(
       SpliceableJSONWriter& aWriter,
-      const mozilla::HashMap<nsCString, ProfilerJSSourceData>& aJSSourcesByUUID)
+      const mozilla::JSSourcesByUUID& aJSSourcesByUUID)
       const;
 
   // Find (via |aLastSample|) the most recent sample for the thread denoted by

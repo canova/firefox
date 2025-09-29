@@ -2556,7 +2556,7 @@ void ProfileBuffer::DiscardSamplesBeforeTime(double aTime) {
 
 mozilla::HashMap<uint32_t, uint32_t> ProfileBuffer::StreamSourceTableToJSON(
     SpliceableJSONWriter& aWriter,
-    const mozilla::HashMap<nsCString, ProfilerJSSourceData>& aJSSourcesByUUID)
+    const mozilla::JSSourcesByUUID& aJSSourcesByUUID)
     const {
   enum Schema : uint32_t { UUID = 0, FILENAME = 1 };
   mozilla::HashMap<uint32_t, uint32_t> sourceIdToIndexMap;
@@ -2575,14 +2575,23 @@ mozilla::HashMap<uint32_t, uint32_t> ProfileBuffer::StreamSourceTableToJSON(
     uint32_t index = 0;
     for (auto iter = aJSSourcesByUUID.iter(); !iter.done(); iter.next()) {
       const nsCString& uuid = iter.get().key();
-      const ProfilerJSSourceData& sourceData = iter.get().value();
+      const JSSourceDataVariant& sourceDataVariant = iter.get().value();
+
+      // Extract sourceId and filename from the variant
+      uint32_t sourceId = sourceDataVariant.match(
+          [](const ProfilerJSSourceData& data) { return data.sourceId(); },
+          [](const ErgonomicProfilerJSSourceData& data) { return data.sourceId; });
+
+      const char* filename = sourceDataVariant.match(
+          [](const ProfilerJSSourceData& data) { return data.filePath(); },
+          [](const ErgonomicProfilerJSSourceData& data) { return data.filePath.get(); });
 
       // Build sourceId-to-index mapping
-      if (sourceData.sourceId() != 0) {
-        MOZ_ASSERT(!sourceIdToIndexMap.has(sourceData.sourceId()),
+      if (sourceId != 0) {
+        MOZ_ASSERT(!sourceIdToIndexMap.has(sourceId),
                    "Duplicate sourceId detected! This indicates sourceId "
                    "collision between different sources.");
-        if (!sourceIdToIndexMap.put(sourceData.sourceId(), index)) {
+        if (!sourceIdToIndexMap.put(sourceId, index)) {
           // OOM, return.
           aWriter.SourceFailureLatch().SetFailure(
               "OOM in ProfileBuffer::StreamSourceTableToJSON");
@@ -2597,7 +2606,7 @@ mozilla::HashMap<uint32_t, uint32_t> ProfileBuffer::StreamSourceTableToJSON(
         // into string table once we have "process global" string table.
         // Currently string tables are per-thread.
         aWriter.StringElement(MakeStringSpan(uuid.get()));
-        aWriter.StringElement(MakeStringSpan(sourceData.filePath()));
+        aWriter.StringElement(MakeStringSpan(filename));
       }
       aWriter.EndArray();
 

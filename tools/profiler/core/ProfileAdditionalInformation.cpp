@@ -20,27 +20,26 @@
 JSString*
 mozilla::ProfileGenerationAdditionalInformation::CreateJSStringFromSourceData(
     JSContext* aCx, const ProfilerJSSourceData& aSourceData) const {
-  if (aSourceData.isSourceTextUTF16()) {
-    const auto& srcText = aSourceData.asSourceTextUTF16();
-    return JS_NewUCStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
-  }
+  return aSourceData.data().match(
+      [&](const ProfilerJSSourceData::SourceTextUTF16& srcText) -> JSString* {
+        return JS_NewUCStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
+      },
+      [&](const ProfilerJSSourceData::SourceTextUTF8& srcText) -> JSString* {
+        return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
+      },
+      [&](const ProfilerJSSourceData::RetrievableFile&) -> JSString* {
+        ProfilerJSSourceData retrievedData =
+            js::RetrieveProfilerSourceContent(aCx, aSourceData.filePath());
+        const auto& data = retrievedData.data();
+        MOZ_RELEASE_ASSERT(data.is<ProfilerJSSourceData::SourceTextUTF8>(),
+                           "Retrieved JS source has to be utf-8");
 
-  if (aSourceData.isSourceTextUTF8()) {
-    const auto& srcText = aSourceData.asSourceTextUTF8();
-    return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
-  }
-
-  if (aSourceData.isRetrievableFile()) {
-    ProfilerJSSourceData retrievedData =
-        js::RetrieveProfilerSourceContent(aCx, aSourceData.filePath());
-
-    MOZ_RELEASE_ASSERT(retrievedData.isSourceTextUTF8(),
-                       "Retrieved JS source has to be utf-8");
-    const auto& srcText = retrievedData.asSourceTextUTF8();
-    return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
-  }
-
-  return JS_NewStringCopyZ(aCx, "[unavailable]");
+        const auto& srcText = data.as<ProfilerJSSourceData::SourceTextUTF8>();
+        return JS_NewStringCopyN(aCx, srcText.chars_.get(), srcText.length_);
+      },
+      [&](const ProfilerJSSourceData::Unavailable&) -> JSString* {
+        return JS_NewStringCopyZ(aCx, "[unavailable]");
+      });
 }
 
 void mozilla::ProfileGenerationAdditionalInformation::ToJSValue(
@@ -168,26 +167,29 @@ void IPC::ParamTraits<ProfilerJSSourceData>::Write(MessageWriter* aWriter,
   }
 
   // Then write the specific data type
-  if (aParam.isSourceTextUTF16()) {
-    WriteParam(aWriter, kSourceTextUTF16Tag);
-    const auto& srcText = aParam.asSourceTextUTF16();
-    WriteParam(aWriter, srcText.length_);
-    if (srcText.length_ > 0) {
-      aWriter->WriteBytes(srcText.chars_.get(),
-                          srcText.length_ * sizeof(char16_t));
-    }
-  } else if (aParam.isSourceTextUTF8()) {
-    WriteParam(aWriter, kSourceTextUTF8Tag);
-    const auto& srcText = aParam.asSourceTextUTF8();
-    WriteParam(aWriter, srcText.length_);
-    if (srcText.length_ > 0) {
-      aWriter->WriteBytes(srcText.chars_.get(), srcText.length_ * sizeof(char));
-    }
-  } else if (aParam.isRetrievableFile()) {
-    WriteParam(aWriter, kRetrievableFileTag);
-  } else {
-    WriteParam(aWriter, kUnavailableTag);
-  }
+  aParam.data().match(
+      [&](const ProfilerJSSourceData::SourceTextUTF16& srcText) {
+        WriteParam(aWriter, kSourceTextUTF16Tag);
+        WriteParam(aWriter, srcText.length_);
+        if (srcText.length_ > 0) {
+          aWriter->WriteBytes(srcText.chars_.get(),
+                              srcText.length_ * sizeof(char16_t));
+        }
+      },
+      [&](const ProfilerJSSourceData::SourceTextUTF8& srcText) {
+        WriteParam(aWriter, kSourceTextUTF8Tag);
+        WriteParam(aWriter, srcText.length_);
+        if (srcText.length_ > 0) {
+          aWriter->WriteBytes(srcText.chars_.get(),
+                              srcText.length_ * sizeof(char));
+        }
+      },
+      [&](const ProfilerJSSourceData::RetrievableFile&) {
+        WriteParam(aWriter, kRetrievableFileTag);
+      },
+      [&](const ProfilerJSSourceData::Unavailable&) {
+        WriteParam(aWriter, kUnavailableTag);
+      });
 }
 
 bool IPC::ParamTraits<ProfilerJSSourceData>::Read(MessageReader* aReader,

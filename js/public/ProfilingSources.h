@@ -106,33 +106,20 @@ struct JS_PUBLIC_API ProfilerJSSourceData {
   uint32_t sourceId() const { return sourceId_; }
   const char* filePath() const { return filePath_.get(); }
   size_t filePathLength() const { return filePathLength_; }
-
-  bool isSourceText() const {
-    return data_.is<SourceTextUTF16>() || data_.is<SourceTextUTF8>();
-  }
-  bool isSourceTextUTF16() const { return data_.is<SourceTextUTF16>(); }
-  bool isSourceTextUTF8() const { return data_.is<SourceTextUTF8>(); }
-  bool isRetrievableFile() const { return data_.is<RetrievableFile>(); }
-  bool isUnavailable() const { return data_.is<Unavailable>(); }
-
-  const SourceTextUTF16& asSourceTextUTF16() const {
-    return data_.as<SourceTextUTF16>();
-  }
-  const SourceTextUTF8& asSourceTextUTF8() const {
-    return data_.as<SourceTextUTF8>();
-  }
+  const ProfilerSourceVariant& data() const { return data_; }
 
   size_t SizeOf() const {
     // Size of sourceId + filepath
     size_t size = sizeof(uint32_t) + filePathLength_ * sizeof(char);
 
-    if (isSourceTextUTF16()) {
-      const auto& srcText = asSourceTextUTF16();
-      size += srcText.length_ * sizeof(char16_t);
-    } else if (isSourceTextUTF8()) {
-      const auto& srcText = asSourceTextUTF8();
-      size += srcText.length_ * sizeof(char);
-    }
+    data_.match(
+        [&](const SourceTextUTF16& srcText) {
+          size += srcText.length_ * sizeof(char16_t);
+        },
+        [&](const SourceTextUTF8& srcText) {
+          size += srcText.length_ * sizeof(char);
+        },
+        [](const RetrievableFile&) {}, [](const Unavailable&) {});
 
     return size;
   }

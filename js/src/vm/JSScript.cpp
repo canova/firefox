@@ -1065,20 +1065,14 @@ size_t UncompressedSourceCache::sizeOfExcludingThis(
   return n;
 }
 
+/*
+ * Core decompression function that decompresses a single chunk without
+ * JSContext. Returns EntryUnits<Unit> on success, null EntryUnits on failure.
+ * Does not report OOM or use caching - suitable for off-main-thread use.
+ */
 template <typename Unit>
-const Unit* ScriptSource::chunkUnits(
-    JSContext* cx, UncompressedSourceCache::AutoHoldEntry& holder,
-    size_t chunk) {
+EntryUnits<Unit> ScriptSource::chunkUnitsNoContext(size_t chunk) {
   const CompressedData<Unit>& c = *compressedData<Unit>();
-
-  // Try cache lookup only if we have a JSContext
-  if (cx) {
-    ScriptSourceChunk ssc(this, chunk);
-    if (const Unit* decompressed =
-            cx->caches().uncompressedSourceCache.lookup<Unit>(ssc, holder)) {
-      return decompressed;
-    }
-  }
 
   size_t totalLengthInBytes = length() * sizeof(Unit);
   size_t chunkBytes = Compressor::chunkSize(totalLengthInBytes, chunk);
@@ -1087,10 +1081,7 @@ const Unit* ScriptSource::chunkUnits(
   const size_t chunkLength = chunkBytes / sizeof(Unit);
   EntryUnits<Unit> decompressed(js_pod_malloc<Unit>(chunkLength));
   if (!decompressed) {
-    if (cx) {
-      JS_ReportOutOfMemory(cx);
-    }
-    return nullptr;
+    return EntryUnits<Unit>(nullptr);
   }
 
   // Compression treats input and output memory as plain ol' bytes. These
@@ -1098,29 +1089,52 @@ const Unit* ScriptSource::chunkUnits(
   if (!DecompressStringChunk(
           reinterpret_cast<const unsigned char*>(c.raw.chars()), chunk,
           reinterpret_cast<unsigned char*>(decompressed.get()), chunkBytes)) {
-    if (cx) {
-      JS_ReportOutOfMemory(cx);
-    }
+    return EntryUnits<Unit>(nullptr);
+  }
+
+  return decompressed;
+}
+
+/*
+ * Wrapper function that handles caching and OOM reporting for chunk
+ * decompression. Uses chunkUnitsNoContext() for the actual decompression work.
+ */
+template <typename Unit>
+const Unit* ScriptSource::chunkUnits(
+    JSContext* cx, UncompressedSourceCache::AutoHoldEntry& holder,
+    size_t chunk) {
+  // Try cache lookup
+  ScriptSourceChunk ssc(this, chunk);
+  if (const Unit* decompressed =
+          cx->caches().uncompressedSourceCache.lookup<Unit>(ssc, holder)) {
+    return decompressed;
+  }
+
+  // Call the core decompression function
+  EntryUnits<Unit> decompressed = chunkUnitsNoContext<Unit>(chunk);
+
+  // Report OOM if decompression failed
+  if (!decompressed) {
+    JS_ReportOutOfMemory(cx);
     return nullptr;
   }
 
   const Unit* ret = decompressed.get();
 
-  // Try to cache the result only if we have a JSContext
-  if (cx) {
-    ScriptSourceChunk ssc(this, chunk);
-    if (!cx->caches().uncompressedSourceCache.put(
-            ssc, ToSourceData(std::move(decompressed)), holder)) {
-      JS_ReportOutOfMemory(cx);
-      return nullptr;
-    }
-  } else {
-    // Without caching, transfer ownership to holder for memory management
-    holder.holdUnits(std::move(decompressed));
+  // Put the result in the cache
+  if (!cx->caches().uncompressedSourceCache.put(
+          ssc, ToSourceData(std::move(decompressed)), holder)) {
+    JS_ReportOutOfMemory(cx);
+    return nullptr;
   }
 
   return ret;
 }
+
+template EntryUnits<Utf8Unit> ScriptSource::chunkUnitsNoContext<Utf8Unit>(
+    size_t);
+template EntryUnits<char16_t> ScriptSource::chunkUnitsNoContext<char16_t>(
+    size_t);
 
 template <typename Unit>
 void ScriptSource::convertToCompressedSource(SharedImmutableString compressed,
@@ -1298,6 +1312,114 @@ const Unit* ScriptSource::units(JSContext* cx,
   return ret;
 }
 
+/*
+ * Version of units() that works without JSContext for off-main-thread use.
+ * Does not use caching or report OOM. Avoids copying for uncompressed sources.
+ */
+template <typename Unit>
+const Unit* ScriptSource::unitsNoContext(
+    UncompressedSourceCache::AutoHoldEntry& holder, size_t begin, size_t len) {
+  MOZ_ASSERT(begin <= length());
+  MOZ_ASSERT(begin + len <= length());
+
+  if (isUncompressed<Unit>()) {
+    const Unit* units = uncompressedData<Unit>()->units();
+    if (!units) {
+      return nullptr;
+    }
+    // For uncompressed sources, just return pointer into existing data
+    return units + begin;
+  }
+
+  if (data.is<Missing>()) {
+    MOZ_CRASH(
+        "ScriptSource::unitsNoContext() on ScriptSource with missing source");
+  }
+
+  if (data.is<Retrievable<Unit>>()) {
+    MOZ_CRASH(
+        "ScriptSource::unitsNoContext() on ScriptSource with retrievable "
+        "source");
+  }
+
+  MOZ_ASSERT(isCompressed<Unit>());
+
+  // Determine first/last chunks, the offset (in bytes) into the first chunk
+  // of the requested units, and the number of bytes in the last chunk.
+  //
+  // Note that first and last chunk sizes are miscomputed and *must not be
+  // used* when the first chunk is the last chunk.
+  size_t firstChunk, firstChunkOffset, firstChunkSize;
+  size_t lastChunk, lastChunkSize;
+  Compressor::rangeToChunkAndOffset(
+      begin * sizeof(Unit), (begin + len) * sizeof(Unit), &firstChunk,
+      &firstChunkOffset, &firstChunkSize, &lastChunk, &lastChunkSize);
+  MOZ_ASSERT(firstChunk <= lastChunk);
+  MOZ_ASSERT(firstChunkOffset % sizeof(Unit) == 0);
+  MOZ_ASSERT(firstChunkSize % sizeof(Unit) == 0);
+
+  size_t firstUnit = firstChunkOffset / sizeof(Unit);
+
+  // Directly return units within a single chunk
+  if (firstChunk == lastChunk) {
+    EntryUnits<Unit> decompressed = chunkUnitsNoContext<Unit>(firstChunk);
+    if (!decompressed) {
+      return nullptr;
+    }
+
+    const Unit* ret = decompressed.get() + firstUnit;
+    holder.holdUnits(std::move(decompressed));
+    return ret;
+  }
+
+  // Otherwise the units span multiple chunks.  Copy successive chunks'
+  // decompressed units into freshly-allocated memory to return.
+  EntryUnits<Unit> decompressed(js_pod_malloc<Unit>(len));
+  if (!decompressed) {
+    return nullptr;
+  }
+
+  Unit* cursor;
+
+  {
+    // For multiple chunks, we need separate EntryUnits for each chunk
+    EntryUnits<Unit> firstChunkUnits = chunkUnitsNoContext<Unit>(firstChunk);
+    if (!firstChunkUnits) {
+      return nullptr;
+    }
+
+    cursor = std::copy_n(firstChunkUnits.get() + firstUnit,
+                         firstChunkSize / sizeof(Unit), decompressed.get());
+  }
+
+  for (size_t i = firstChunk + 1; i < lastChunk; i++) {
+    EntryUnits<Unit> chunkUnits = chunkUnitsNoContext<Unit>(i);
+    if (!chunkUnits) {
+      return nullptr;
+    }
+
+    cursor = std::copy_n(chunkUnits.get(),
+                         Compressor::CHUNK_SIZE / sizeof(Unit), cursor);
+  }
+
+  {
+    EntryUnits<Unit> lastChunkUnits = chunkUnitsNoContext<Unit>(lastChunk);
+    if (!lastChunkUnits) {
+      return nullptr;
+    }
+
+    cursor =
+        std::copy_n(lastChunkUnits.get(), lastChunkSize / sizeof(Unit), cursor);
+  }
+
+  MOZ_ASSERT(PointerRangeSize(decompressed.get(), cursor) == len);
+
+  // Transfer ownership to |holder|.
+  const Unit* ret = decompressed.get();
+  holder.holdUnits(std::move(decompressed));
+  return ret;
+}
+
 template <typename Unit>
 const Unit* ScriptSource::uncompressedUnits(size_t begin, size_t len) {
   MOZ_ASSERT(begin <= length());
@@ -1348,6 +1470,27 @@ ScriptSource::PinnedUnitsIfUncompressed<Unit>::PinnedUnitsIfUncompressed(
 
 template class ScriptSource::PinnedUnitsIfUncompressed<Utf8Unit>;
 template class ScriptSource::PinnedUnitsIfUncompressed<char16_t>;
+
+template const Utf8Unit* ScriptSource::unitsNoContext<Utf8Unit>(
+    UncompressedSourceCache::AutoHoldEntry&, size_t, size_t);
+template const char16_t* ScriptSource::unitsNoContext<char16_t>(
+    UncompressedSourceCache::AutoHoldEntry&, size_t, size_t);
+
+// No-context constructor for off-main-thread use. Uses unitsNoContext().
+template <typename Unit>
+ScriptSource::PinnedUnits<Unit>::PinnedUnits(
+    ScriptSource* source, UncompressedSourceCache::AutoHoldEntry& holder,
+    size_t begin, size_t len)
+    : PinnedUnitsBase(source) {
+  MOZ_ASSERT(source->hasSourceType<Unit>(), "must pin units of source's type");
+
+  addReader();
+
+  units_ = source->unitsNoContext<Unit>(holder, begin, len);
+  if (!units_) {
+    removeReader<Unit>();
+  }
+}
 
 JSLinearString* ScriptSource::substring(JSContext* cx, size_t start,
                                         size_t stop) {
@@ -1427,7 +1570,7 @@ SubstringCharsResult ScriptSource::substringChars(size_t start, size_t stop) {
     // Pass nullptr JSContext - this method is designed to be called
     // off-main-thread where JSContext is not available. Decompression still
     // works but without caching.
-    PinnedUnits<Utf8Unit> units(nullptr, this, holder, start, len);
+    PinnedUnits<Utf8Unit> units(this, holder, start, len);
     if (!units.asChars()) {
       return SubstringCharsResult(JS::UniqueChars(nullptr));
     }
@@ -1447,7 +1590,7 @@ SubstringCharsResult ScriptSource::substringChars(size_t start, size_t stop) {
   // Pass nullptr JSContext - this method is designed to be called
   // off-main-thread where JSContext is not available. Decompression still works
   // but without caching.
-  PinnedUnits<char16_t> units(nullptr, this, holder, start, len);
+  PinnedUnits<char16_t> units(this, holder, start, len);
   if (!units.asChars()) {
     return SubstringCharsResult(JS::UniqueTwoByteChars(nullptr));
   }

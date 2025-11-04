@@ -92,6 +92,10 @@ class JitCodeIterator {
   size_t iteratorIndex = 0;
 };
 
+// Lookup a JitCodeRecord by code address
+// Returns nullptr if not found
+JitCodeRecord* LookupJitCodeRecord(uint64_t addr);
+
 }  // namespace JS
 
 #endif /* js_JitCodeAPI_h */

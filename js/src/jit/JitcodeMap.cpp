@@ -15,6 +15,7 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
+#include "js/JitCodeAPI.h"
 #include "js/ProfilingFrameIterator.h"
 #include "js/Vector.h"
 #include "vm/BytecodeLocation.h"  // for BytecodeLocation
@@ -27,6 +28,38 @@ using mozilla::Maybe;
 
 namespace js {
 namespace jit {
+
+// Helper function to get line/column information from JitCodeRecord
+static void GetLineInfoFromJitCodeRecord(uint64_t addr, uint32_t* line,
+                                         uint32_t* column) {
+  JS::JitCodeRecord* record = JS::LookupJitCodeRecord(addr);
+
+  if (record && !record->sourceInfo.empty()) {
+    // Calculate offset from the base address
+    uint32_t codeOffset = addr - record->code_addr;
+
+    // Find the closest source info entry that doesn't exceed codeOffset
+    const JS::JitCodeSourceInfo* foundInfo = nullptr;
+
+    for (const auto& srcInfo : record->sourceInfo) {
+      if (srcInfo.offset <= codeOffset) {
+        if (!foundInfo || srcInfo.offset > foundInfo->offset) {
+          foundInfo = &srcInfo;
+        }
+      }
+    }
+
+    // If no entry was found that's <= codeOffset, use the first entry
+    if (!foundInfo) {
+      foundInfo = &record->sourceInfo[0];
+    }
+
+    if (foundInfo) {
+      *line = foundInfo->lineno;
+      *column = foundInfo->colno.oneOriginValue();
+    }
+  }
+}
 
 static inline JitcodeRegionEntry RegionAtAddr(const IonEntry& entry, void* ptr,
                                               uint32_t* ptrOffset) {
@@ -136,20 +169,9 @@ uint32_t BaselineEntry::callStackAtAddr(void* ptr, CallStackFrameInfo* results,
 
   results[0].label = str();
   results[0].sourceId = scriptSource().scriptSource->id();
+  uint64_t addr = reinterpret_cast<uint64_t>(ptr);
 
-  if (script_->hasBaselineScript() &&
-      script_->baselineScript()->containsCodeAddress((uint8_t*)ptr)) {
-    jsbytecode* pc = script_->baselineScript()->approximatePcForNativeAddress(
-        script_, (uint8_t*)ptr);
-    JS::LimitedColumnNumberOneOrigin col;
-    uint32_t line = JS_PCToLineNumber(script_, pc, &col);
-
-    results[0].line = line;
-    results[0].column = col.oneOriginValue();
-  } else {
-    results[0].line = 0;
-    results[0].column = 0;
-  }
+  GetLineInfoFromJitCodeRecord(addr, &results[0].line, &results[0].column);
 
   return 1;
 }

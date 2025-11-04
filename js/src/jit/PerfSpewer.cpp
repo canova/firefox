@@ -443,6 +443,23 @@ JS::JitCodeIterator::JitCodeIterator() : iteratorIndex(0) {
 
 JS::JitCodeIterator::~JitCodeIterator() { PerfMutex.unlock(); }
 
+JS::JitCodeRecord* JS::LookupJitCodeRecord(uint64_t addr) {
+  if (!JS_IsInitialized()) {
+    return nullptr;
+  }
+
+  // Lock is handled by the caller in profiling context
+  // Search through profilerData for a record that contains this address
+  for (auto& record : profilerData) {
+    if (addr >= record.code_addr &&
+        addr < record.code_addr + record.instructionSize) {
+      return &record;
+    }
+  }
+
+  return nullptr;
+}
+
 static bool PerfSrcEnabled() {
   return PerfMode == PerfModeType::Source || IsGeckoProfiling();
 }
@@ -886,28 +903,38 @@ void PerfSpewer::saveDebugInfo(const char* filename, uintptr_t base,
                                JS::JitCodeRecord* profilerRecord,
                                AutoLockPerfSpewer& lock) {
 #ifdef JS_ION_PERF
-  if (!IsPerfProfiling()) {
-    return;
-  }
+  if (IsPerfProfiling()) {
+    JitDumpDebugRecord debug_record = {};
 
-  JitDumpDebugRecord debug_record = {};
+    uint64_t n_records = debugInfo_.length();
 
-  uint64_t n_records = debugInfo_.length();
+    debug_record.header.id = JIT_CODE_DEBUG_INFO;
+    debug_record.header.total_size =
+        sizeof(debug_record) +
+        n_records * (sizeof(JitDumpDebugEntry) + strlen(filename) + 1);
+    debug_record.header.timestamp = GetMonotonicTimestamp();
+    debug_record.code_addr = uint64_t(base);
+    debug_record.nr_entry = n_records;
 
-  debug_record.header.id = JIT_CODE_DEBUG_INFO;
-  debug_record.header.total_size =
-      sizeof(debug_record) +
-      n_records * (sizeof(JitDumpDebugEntry) + strlen(filename) + 1);
-  debug_record.header.timestamp = GetMonotonicTimestamp();
-  debug_record.code_addr = uint64_t(base);
-  debug_record.nr_entry = n_records;
-
-  WriteToJitDumpFile(&debug_record, sizeof(debug_record), lock);
-  for (DebugEntry& entry : debugInfo_) {
-    WriteJitDumpDebugEntry(uint64_t(base) + entry.offset, filename, entry.line,
-                           entry.column, lock);
+    WriteToJitDumpFile(&debug_record, sizeof(debug_record), lock);
+    for (DebugEntry& entry : debugInfo_) {
+      WriteJitDumpDebugEntry(uint64_t(base) + entry.offset, filename,
+                             entry.line, entry.column, lock);
+    }
   }
 #endif
+
+  // Populate profiler record with source info
+  for (DebugEntry& entry : debugInfo_) {
+    if (JS::JitCodeSourceInfo* srcInfo =
+            CreateProfilerSourceEntry(profilerRecord, lock)) {
+      srcInfo->offset = entry.offset;
+      srcInfo->lineno = entry.line;
+      srcInfo->colno =
+          JS::LimitedColumnNumberOneOrigin::fromUnlimited(entry.column);
+      srcInfo->filename = JS_smprintf("%s", filename);
+    }
+  }
 }
 
 static UniqueChars GetFunctionDesc(const char* tierName, JSContext* cx,

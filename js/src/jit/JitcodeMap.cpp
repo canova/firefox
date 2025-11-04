@@ -16,6 +16,7 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
+#include "js/JitCodeAPI.h"
 #include "js/ProfilingFrameIterator.h"
 #include "js/Vector.h"
 #include "vm/BytecodeLocation.h"  // for BytecodeLocation
@@ -28,6 +29,40 @@ using mozilla::Maybe;
 
 namespace js {
 namespace jit {
+
+// Helper function to get line/column information from JitCodeRecord
+static Maybe<LineColInfo> GetLineInfoFromJitCodeRecord(uint64_t addr) {
+  JS::JitCodeRecord* record = JS::LookupJitCodeRecord(addr);
+
+  if (record && !record->sourceInfo.empty()) {
+    // Calculate offset from the base address
+    uint32_t codeOffset = addr - record->code_addr;
+
+    // Find the closest source info entry that doesn't exceed codeOffset
+    const JS::JitCodeSourceInfo* foundInfo = nullptr;
+
+    for (const auto& srcInfo : record->sourceInfo) {
+      if (srcInfo.offset <= codeOffset) {
+        if (!foundInfo || srcInfo.offset > foundInfo->offset) {
+          foundInfo = &srcInfo;
+        }
+      }
+    }
+
+    // If no entry was found that's <= codeOffset, use the first entry
+    if (!foundInfo) {
+      foundInfo = &record->sourceInfo[0];
+    }
+
+    if (foundInfo) {
+      return mozilla::Some(
+          LineColInfo{.line = foundInfo->lineno,
+                      .column = foundInfo->colno.oneOriginValue()});
+    }
+  }
+
+  return mozilla::Nothing();
+}
 
 static inline JitcodeRegionEntry RegionAtAddr(const IonEntry& entry, void* ptr,
                                               uint32_t* ptrOffset) {
@@ -68,20 +103,9 @@ uint32_t IonEntry::callStackAtAddr(void* ptr, const char** labelResults,
     labelResults[count] = getStr(scriptIdx);
     sourceIdResults[count] = getScriptSource(scriptIdx).scriptSource->id();
 
-    // Calculate line numbers during sampling
-    // For the first entry (innermost frame), use precise PC offset from
-    // delta-run
-    if (count == 0) {
-      pcOffset = region.findPcOffset(ptrOffset, pcOffset);
-    }
-    JSScript* script = getScript(scriptIdx);
-    jsbytecode* pc = script->offsetToPC(pcOffset);
-    MOZ_ASSERT(BytecodeLocation(script, pc).isValid());
-
-    JS::LimitedColumnNumberOneOrigin col;
-    uint32_t line = JS_PCToLineNumber(script, pc, &col);
-    lineColInfo[count] = mozilla::Some(
-        LineColInfo{.line = line, .column = col.oneOriginValue()});
+    uint64_t addr =
+        reinterpret_cast<uint64_t>(count == 0 ? ptr : nativeStartAddr());
+    lineColInfo[count] = GetLineInfoFromJitCodeRecord(addr);
 
     count++;
     if (count >= maxResults) {
@@ -145,18 +169,8 @@ uint32_t BaselineEntry::callStackAtAddr(void* ptr, const char** labelResults,
   labelResults[0] = str();
   sourceIdResults[0] = scriptSource().scriptSource->id();
 
-  if (script_->hasBaselineScript() &&
-      script_->baselineScript()->containsCodeAddress((uint8_t*)ptr)) {
-    jsbytecode* pc = script_->baselineScript()->approximatePcForNativeAddress(
-        script_, (uint8_t*)ptr);
-    JS::LimitedColumnNumberOneOrigin col;
-    uint32_t line = JS_PCToLineNumber(script_, pc, &col);
-
-    lineColInfo[0] = mozilla::Some(
-        LineColInfo{.line = line, .column = col.oneOriginValue()});
-  } else {
-    lineColInfo[0] = mozilla ::Nothing();
-  }
+  uint64_t addr = reinterpret_cast<uint64_t>(ptr);
+  lineColInfo[0] = GetLineInfoFromJitCodeRecord(addr);
 
   return 1;
 }

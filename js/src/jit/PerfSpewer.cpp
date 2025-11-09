@@ -674,6 +674,15 @@ void BaselinePerfSpewer::recordInstruction(MacroAssembler& masm, jsbytecode* pc,
     JS::LimitedColumnNumberOneOrigin colno;
     uint32_t line = PCToLineNumber(script, pc, &colno);
     uint32_t column = colno.oneOriginValue();
+
+    // DEBUG: Log what we're recording
+    JSOp op = JSOp(*pc);
+    fprintf(stderr,
+            "Recording: native_offset=%u (masm=%u - start=%u), pc_offset=%zu, "
+            "line=%u, op=%s\n",
+            offset, masm.currentOffset(), startOffset_, script->pcToOffset(pc),
+            line, js::CodeName(op));
+
     if (!debugInfo_.emplaceBack(offset, line, column)) {
       disable();
     }

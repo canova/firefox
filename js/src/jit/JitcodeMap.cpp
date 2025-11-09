@@ -38,6 +38,15 @@ static Maybe<LineColInfo> GetLineInfoFromJitCodeRecord(uint64_t addr) {
     // Calculate offset from the base address
     uint32_t codeOffset = addr - record->code_addr;
 
+    fprintf(stderr, "GetLineInfoFromJitCodeRecord: looking up offset %u\n",
+            codeOffset);
+    // fprintf(stderr, "  Dumping all sourceInfo entries:\n");
+    // for (size_t i = 0; i < record->sourceInfo.length(); i++) {
+    //   const auto& srcInfo = record->sourceInfo[i];
+    //   fprintf(stderr, "    [%zu] offset=%u line=%u\n", i, srcInfo.offset,
+    //           srcInfo.lineno);
+    // }
+
     // Find the closest source info entry that doesn't exceed codeOffset
     const JS::JitCodeSourceInfo* foundInfo = nullptr;
 
@@ -49,12 +58,19 @@ static Maybe<LineColInfo> GetLineInfoFromJitCodeRecord(uint64_t addr) {
       }
     }
 
+    fprintf(stderr, "  Found entry: offset=%u line=%u\n",
+            foundInfo ? foundInfo->offset : 0,
+            foundInfo ? foundInfo->lineno : 0);
+
     // If no entry was found that's <= codeOffset, use the first entry
     if (!foundInfo) {
       foundInfo = &record->sourceInfo[0];
     }
 
     if (foundInfo) {
+      if (foundInfo->lineno == 31) {
+        printf("canova found the line 31 info\n");
+      }
       return mozilla::Some(
           LineColInfo{.line = foundInfo->lineno,
                       .column = foundInfo->colno.oneOriginValue()});
@@ -1151,6 +1167,7 @@ JS_PUBLIC_API JS::ProfiledFrameRange JS::GetProfiledFrames(JSContext* cx,
   ProfiledFrameRange result(rt, addr, entry);
 
   if (entry) {
+    printf("canova JS::GetProfiledFrames\n");
     result.depth_ =
         entry->callStackAtAddr(rt, addr, result.labels_, result.sourceIds_,
                                result.lineColInfo_, std::size(result.labels_));

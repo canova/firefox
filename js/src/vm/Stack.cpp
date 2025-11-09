@@ -770,6 +770,7 @@ uint32_t JS::ProfilingFrameIterator::extractStack(Frame* frames,
   const char* labels[64];
   uint32_t sourceIds[64];
   mozilla::Maybe<js::jit::LineColInfo> lineColInfo[64];
+  printf("canova ProfilingFrameIterator::extractStack\n");
   uint32_t depth = entry->callStackAtAddr(
       cx_->runtime(), jsJitIter().resumePCinCurrentFrame(), labels, sourceIds,
       lineColInfo, std::size(labels));

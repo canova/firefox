@@ -151,6 +151,10 @@ uint32_t BaselineEntry::callStackAtAddr(void* ptr, const char** labelResults,
     JS::LimitedColumnNumberOneOrigin col;
     uint32_t line = JS_PCToLineNumber(script_, pc, &col);
 
+    if (line == 31) {
+      printf("canova found the line 31 info\n");
+    }
+
     lineColInfo[0] = mozilla::Some(
         LineColInfo{.line = line, .column = col.oneOriginValue()});
   } else {

@@ -96,7 +96,7 @@ uint32_t IonEntry::callStackAtAddr(void* ptr, CallStackFrameInfo* results,
     MOZ_ASSERT(getStr(scriptIdx));
 
     results[count].label = getStr(scriptIdx);
-    results[count].sourceId = getScriptSource(scriptIdx).scriptSource->id();
+    results[count].sourceId = getScriptData(scriptIdx).scriptSource->id();
 
     // Calculate line numbers during sampling
     // For the first entry (innermost frame), use precise PC offset from
@@ -104,12 +104,19 @@ uint32_t IonEntry::callStackAtAddr(void* ptr, CallStackFrameInfo* results,
     if (count == 0) {
       pcOffset = region.findPcOffset(ptrOffset, pcOffset);
     }
-    JSScript* script = getScript(scriptIdx);
-    jsbytecode* pc = script->offsetToPC(pcOffset);
-    MOZ_ASSERT(BytecodeLocation(script, pc).isValid());
+
+    const ScriptData& scriptData = getScriptData(scriptIdx);
+    ImmutableScriptData* isd = scriptData.sharedData->get();
+    jsbytecode* code = isd->code();
+    jsbytecode* pc = code + pcOffset;
+    MOZ_ASSERT(pcOffset < isd->codeLength());
+
+    SrcNote* notes = isd->notes();
+    SrcNote* notesEnd = notes + isd->noteLength();
 
     JS::LimitedColumnNumberOneOrigin col;
-    uint32_t line = JS_PCToLineNumber(script, pc, &col);
+    uint32_t line = PCToLineNumber(scriptData.lineno, scriptData.column,
+                                    notes, notesEnd, code, pc, &col);
     results[count].line = line;
     results[count].column = col.oneOriginValue();
 
@@ -168,7 +175,7 @@ uint32_t BaselineEntry::callStackAtAddr(void* ptr, CallStackFrameInfo* results,
   MOZ_ASSERT(maxResults >= 1);
 
   results[0].label = str();
-  results[0].sourceId = scriptSource().scriptSource->id();
+  results[0].sourceId = scriptData().scriptSource->id();
   uint64_t addr = reinterpret_cast<uint64_t>(ptr);
 
   GetLineInfoFromJitCodeRecord(addr, &results[0].line, &results[0].column);
@@ -426,89 +433,13 @@ uint64_t JitcodeGlobalEntry::realmID(JSRuntime* rt) const {
   MOZ_CRASH("Invalid kind");
 }
 
-bool IonEntry::trace(JSTracer* trc) {
-  bool tracedAny = false;
 
-  JSRuntime* rt = trc->runtime();
-  for (auto& entry : scriptList_) {
-    if (!IsMarkedUnbarriered(rt, entry.script)) {
-      TraceManuallyBarrieredEdge(trc, &entry.script,
-                                 "jitcodeglobaltable-ionentry-script");
-      tracedAny = true;
-    }
-  }
-
-  return tracedAny;
-}
-
-void IonEntry::traceWeak(JSTracer* trc) {
-  for (auto& entry : scriptList_) {
-    JSScript** scriptp = &entry.script;
-    MOZ_ALWAYS_TRUE(
-        TraceManuallyBarrieredWeakEdge(trc, scriptp, "IonEntry script"));
-  }
-}
-
-bool IonICEntry::trace(JSTracer* trc) {
-  IonEntry& entry = IonEntryForIonIC(trc->runtime(), this);
-  return entry.trace(trc);
-}
-
-void IonICEntry::traceWeak(JSTracer* trc) {
-  IonEntry& entry = IonEntryForIonIC(trc->runtime(), this);
-  entry.traceWeak(trc);
-}
-
-bool BaselineEntry::trace(JSTracer* trc) {
-  if (!IsMarkedUnbarriered(trc->runtime(), script_)) {
-    TraceManuallyBarrieredEdge(trc, &script_,
-                               "jitcodeglobaltable-baselineentry-script");
-    return true;
-  }
-  return false;
-}
-
-void BaselineEntry::traceWeak(JSTracer* trc) {
-  MOZ_ALWAYS_TRUE(
-      TraceManuallyBarrieredWeakEdge(trc, &script_, "BaselineEntry::script_"));
-}
-
-bool JitcodeGlobalEntry::trace(JSTracer* trc) {
-  bool tracedAny = traceJitcode(trc);
-  switch (kind()) {
-    case Kind::Ion:
-      tracedAny |= asIon().trace(trc);
-      break;
-    case Kind::IonIC:
-      tracedAny |= asIonIC().trace(trc);
-      break;
-    case Kind::Baseline:
-      tracedAny |= asBaseline().trace(trc);
-      break;
-    case Kind::BaselineInterpreter:
-    case Kind::Dummy:
-    case Kind::RealmIndependentShared:
-      break;
-  }
-  return tracedAny;
-}
+bool JitcodeGlobalEntry::trace(JSTracer* trc) { return traceJitcode(trc); }
 
 void JitcodeGlobalEntry::traceWeak(JSTracer* trc) {
-  switch (kind()) {
-    case Kind::Ion:
-      asIon().traceWeak(trc);
-      break;
-    case Kind::IonIC:
-      asIonIC().traceWeak(trc);
-      break;
-    case Kind::Baseline:
-      asBaseline().traceWeak(trc);
-      break;
-    case Kind::BaselineInterpreter:
-    case Kind::Dummy:
-    case Kind::RealmIndependentShared:
-      break;
-  }
+  // IonEntry, IonICEntry, and BaselineEntry no longer store GC-managed
+  // pointers (they use RefPtr<SharedImmutableScriptData> instead), so
+  // there's nothing to trace.
 }
 
 void* JitcodeGlobalEntry::canonicalNativeAddrFor(JSRuntime* rt,
@@ -830,7 +761,7 @@ bool JitcodeRegionEntry::WriteRun(CompactBufferWriter& writer,
       // NB: scriptList is guaranteed to contain curTree->script()
       uint32_t scriptIdx = 0;
       for (; scriptIdx < scriptList.length(); scriptIdx++) {
-        if (scriptList[scriptIdx].sourceAndExtent.matches(curTree->script())) {
+        if (scriptList[scriptIdx].scriptData.matches(curTree->script())) {
           break;
         }
       }
@@ -1010,18 +941,18 @@ bool JitcodeIonTable::WriteIonTable(CompactBufferWriter& writer,
 
   JitSpew(JitSpew_Profiling,
           "Writing native to bytecode map for %s (offset %u-%u) (%zu entries)",
-          scriptList[0].sourceAndExtent.scriptSource->filename(),
-          scriptList[0].sourceAndExtent.toStringStart,
-          scriptList[0].sourceAndExtent.toStringEnd,
+          scriptList[0].scriptData.scriptSource->filename(),
+          scriptList[0].scriptData.toStringStart,
+          scriptList[0].scriptData.toStringEnd,
           mozilla::PointerRangeSize(start, end));
 
   JitSpew(JitSpew_Profiling, "  ScriptList of size %u",
           unsigned(scriptList.length()));
   for (uint32_t i = 0; i < scriptList.length(); i++) {
     JitSpew(JitSpew_Profiling, "  Script %u - %s (offset %u-%u)", i,
-            scriptList[i].sourceAndExtent.scriptSource->filename(),
-            scriptList[i].sourceAndExtent.toStringStart,
-            scriptList[i].sourceAndExtent.toStringEnd);
+            scriptList[i].scriptData.scriptSource->filename(),
+            scriptList[i].scriptData.toStringStart,
+            scriptList[i].scriptData.toStringEnd);
   }
 
   // Write out runs first.  Keep a vector tracking the positive offsets from

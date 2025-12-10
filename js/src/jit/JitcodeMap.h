@@ -217,13 +217,19 @@ inline UniqueJitcodeGlobalEntry MakeJitcodeGlobalEntry(JSContext* cx,
   return res;
 }
 
-struct ScriptSourceAndExtent {
+struct ScriptData {
+  RefPtr<SharedImmutableScriptData> sharedData;
   RefPtr<ScriptSource> scriptSource;
+  uint32_t lineno;
+  JS::LimitedColumnNumberOneOrigin column;
   uint32_t toStringStart;
   uint32_t toStringEnd;
 
-  explicit ScriptSourceAndExtent(JSScript* script)
-      : scriptSource(script->scriptSource()),
+  explicit ScriptData(JSScript* script)
+      : sharedData(script->sharedData()),
+        scriptSource(script->scriptSource()),
+        lineno(script->lineno()),
+        column(script->column()),
         toStringStart(script->toStringStart()),
         toStringEnd(script->toStringEnd()) {}
 
@@ -237,11 +243,10 @@ struct ScriptSourceAndExtent {
 class IonEntry : public JitcodeGlobalEntry {
  public:
   struct ScriptListEntry {
-    JSScript* script;
-    ScriptSourceAndExtent sourceAndExtent;
+    ScriptData scriptData;
     UniqueChars str;
     ScriptListEntry(JSScript* script, UniqueChars str)
-        : script(script), sourceAndExtent(script), str(std::move(str)) {}
+        : scriptData(script), str(std::move(str)) {}
   };
 
   using ScriptList = Vector<ScriptListEntry, 2, SystemAllocPolicy>;
@@ -275,14 +280,9 @@ class IonEntry : public JitcodeGlobalEntry {
 
   size_t numScripts() const { return scriptList_.length(); }
 
-  JSScript* getScript(unsigned idx) const {
+  const ScriptData& getScriptData(unsigned idx) const {
     MOZ_ASSERT(idx < numScripts());
-    return scriptList_[idx].script;
-  }
-
-  const ScriptSourceAndExtent& getScriptSource(unsigned idx) const {
-    MOZ_ASSERT(idx < numScripts());
-    return scriptList_[idx].sourceAndExtent;
+    return scriptList_[idx].scriptData;
   }
 
   const char* getStr(unsigned idx) const {
@@ -298,9 +298,6 @@ class IonEntry : public JitcodeGlobalEntry {
                            uint32_t maxResults) const;
 
   uint64_t realmID() const { return realmId_; }
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
 };
 
 class IonICEntry : public JitcodeGlobalEntry {
@@ -325,14 +322,10 @@ class IonICEntry : public JitcodeGlobalEntry {
                            uint32_t maxResults) const;
 
   uint64_t realmID(JSRuntime* rt) const;
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
 };
 
 class BaselineEntry : public JitcodeGlobalEntry {
-  JSScript* script_;
-  ScriptSourceAndExtent scriptSource_;
+  ScriptData scriptData_;
   UniqueChars str_;
   uint64_t realmId_;
 
@@ -341,16 +334,13 @@ class BaselineEntry : public JitcodeGlobalEntry {
                 JSScript* script, UniqueChars str, uint64_t realmId)
       : JitcodeGlobalEntry(Kind::Baseline, code, nativeStartAddr,
                            nativeEndAddr),
-        script_(script),
-        scriptSource_(script),
+        scriptData_(script),
         str_(std::move(str)),
         realmId_(realmId) {
-    MOZ_ASSERT(script_);
     MOZ_ASSERT(str_);
   }
 
-  JSScript* script() const { return script_; }
-  const ScriptSourceAndExtent& scriptSource() const { return scriptSource_; }
+  const ScriptData& scriptData() const { return scriptData_; }
 
   const char* str() const { return str_.get(); }
 
@@ -360,9 +350,6 @@ class BaselineEntry : public JitcodeGlobalEntry {
                            uint32_t maxResults) const;
 
   uint64_t realmID() const { return realmId_; }
-
-  bool trace(JSTracer* trc);
-  void traceWeak(JSTracer* trc);
 };
 
 class RealmIndependentSharedEntry : public JitcodeGlobalEntry {

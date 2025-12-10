@@ -553,7 +553,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
   if (entry->isIon()) {
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
-    if (!entry->asIon().getScriptSource(0).matches(callee)) {
+    if (!entry->asIon().getScriptData(0).matches(callee)) {
       return false;
     }
 
@@ -566,7 +566,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
     if (forLastCallSite &&
-        !entry->asBaseline().scriptSource().matches(callee)) {
+        !entry->asBaseline().scriptData().matches(callee)) {
       return false;
     }
 

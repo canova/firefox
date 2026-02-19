@@ -36,7 +36,7 @@ const POPUP_FEATURE_FLAG_PREF = "devtools.performance.popup.feature-flag";
 // capabilities of the WebChannel. The front-end can handle old WebChannel
 // versions and has a full list of versions and capabilities here:
 // https://github.com/firefox-devtools/profiler/blob/main/src/app-logic/web-channel.js
-const CURRENT_WEBCHANNEL_VERSION = 6;
+const CURRENT_WEBCHANNEL_VERSION = 7;
 
 const lazyRequire = {};
 // eslint-disable-next-line mozilla/lazy-getter-object-name
@@ -87,6 +87,8 @@ const lazy = createLazyLoaders({
   PlacesUtils: () =>
     ChromeUtils.importESModule("resource://gre/modules/PlacesUtils.sys.mjs")
       .PlacesUtils,
+  NetworkRequest: () =>
+    require("resource://devtools/client/shared/source-map-loader/utils/network-request.js"),
 });
 
 /** @type {{[key:string]: number} | null} */
@@ -275,6 +277,43 @@ export function restartProfiler(pageContext) {
 const infoForBrowserMap = new WeakMap();
 
 /**
+ * Fetch a source map for a generated source using the source-map-loader's
+ * network request utility, which supports special protocols (file:, chrome:,
+ * moz-extension:) and correct credential/cache handling.
+ *
+ * @param {string} url - URL of the generated source (bundle), used as the base
+ *   for resolving relative sourceMapURL values.
+ * @param {string} sourceMapURL - The source map URL, absolute or relative to `url`.
+ * @return {Promise<{content: string, resolvedSourceMapURL: string}>}
+ */
+async function fetchSourceMap(url, sourceMapURL) {
+  let resolvedSourceMapURL;
+  if (!url || sourceMapURL.startsWith("data:")) {
+    resolvedSourceMapURL = sourceMapURL;
+  } else {
+    resolvedSourceMapURL = new URL(
+      sourceMapURL,
+      url.startsWith("data:") ? undefined : url
+    ).toString();
+  }
+
+  const { networkRequest } = lazy.NetworkRequest();
+  const fetched = await networkRequest(resolvedSourceMapURL, {
+    loadFromCache: false,
+    allowRedirects: false,
+    sourceMapBaseURL: url,
+  });
+
+  if (fetched.isDwarf) {
+    throw new Error(
+      "WASM/DWARF source maps are not supported via this WebChannel message"
+    );
+  }
+
+  return { content: fetched.content, resolvedSourceMapURL };
+}
+
+/**
  * This handler computes the response for any messages coming
  * from the WebChannel from profiler.firefox.com.
  *
@@ -428,6 +467,9 @@ async function getResponseForMessage(request, browser) {
 
         return { sourceText };
       });
+    }
+    case "GET_SOURCE_MAP": {
+      return fetchSourceMap(request.url, request.sourceMapURL);
     }
     default: {
       console.error(

@@ -484,7 +484,8 @@ export type RequestFromFrontend =
   | QuerySymbolicationApiRequest
   | GetPageFaviconsRequest
   | OpenScriptInTabDebuggerRequest
-  | GetJSSourcesRequest;
+  | GetJSSourcesRequest
+  | GetSourceMapRequest;
 
 type StatusQueryRequest = { type: "STATUS_QUERY" };
 type EnableMenuButtonRequest = { type: "ENABLE_MENU_BUTTON" };
@@ -524,6 +525,15 @@ type GetJSSourcesRequest = {
   type: "GET_JS_SOURCES";
   sourceUuids: Array<string>;
 };
+type GetSourceMapRequest = {
+  type: "GET_SOURCE_MAP";
+  // URL of the generated source (bundle), used as the base URL for resolving
+  // relative sourceMapURL values.
+  url: string;
+  // The source map URL as found in the SourceMappingURL comment or HTTP header.
+  // May be absolute or relative to `url`.
+  sourceMapURL: string;
+};
 
 export type MessageToFrontend<R> =
   | OutOfBandErrorMessageToFrontend
@@ -557,7 +567,8 @@ export type ResponseToFrontend =
   | QuerySymbolicationApiResponse
   | GetPageFaviconsResponse
   | OpenScriptInTabDebuggerResponse
-  | GetJSSourcesResponse;
+  | GetJSSourcesResponse
+  | GetSourceMapResponse;
 
 type StatusQueryResponse = {
   menuButtonIsEnabled: boolean;
@@ -577,6 +588,9 @@ type StatusQueryResponse = {
   //   Shipped in Firefox 121.
   //   Adds support for the following message types:
   //    - GET_EXTERNAL_POWER_TRACKS
+  // Version 7:
+  //   Adds support for the following message types:
+  //    - GET_SOURCE_MAP
   version: number;
 };
 type EnableMenuButtonResponse = void;
@@ -590,6 +604,10 @@ type GetPageFaviconsResponse = Array<ProfilerFaviconData | null>;
 type OpenScriptInTabDebuggerResponse = void;
 type GetJSSourceReponseItem = { sourceText: string } | { error: string };
 type GetJSSourcesResponse = Array<GetJSSourceReponseItem>;
+type GetSourceMapResponse = {
+  content: string;
+  resolvedSourceMapURL: string;
+};
 
 /**
  * This represents an event channel that can talk to a content page on the web.

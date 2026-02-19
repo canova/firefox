@@ -89,6 +89,8 @@ const lazy = createLazyLoaders({
       .PlacesUtils,
   NetworkRequest: () =>
     require("resource://devtools/client/shared/source-map-loader/utils/network-request.js"),
+  WasmDwarf: () =>
+    require("resource://devtools/client/shared/source-map-loader/wasm-dwarf/convertToJSON.js"),
 });
 
 /** @type {{[key:string]: number} | null} */
@@ -277,9 +279,11 @@ export function restartProfiler(pageContext) {
 const infoForBrowserMap = new WeakMap();
 
 /**
- * Fetch a source map for a generated source using the source-map-loader's
- * network request utility, which supports special protocols (file:, chrome:,
- * moz-extension:) and correct credential/cache handling.
+ * Fetch a source map and all of its referenced original sources, returning a
+ * single source map JSON string with a fully-populated sourcesContent array.
+ * Uses the source-map-loader's network request utility, which supports special
+ * protocols (file:, chrome:, moz-extension:) and correct credential/cache
+ * handling.
  *
  * @param {string} url - URL of the generated source (bundle), used as the base
  *   for resolving relative sourceMapURL values.
@@ -304,13 +308,42 @@ async function fetchSourceMap(url, sourceMapURL) {
     sourceMapBaseURL: url,
   });
 
+  let { content } = fetched;
   if (fetched.isDwarf) {
-    throw new Error(
-      "WASM/DWARF source maps are not supported via this WebChannel message"
-    );
+    const { convertToJSON } = lazy.WasmDwarf();
+    content = await convertToJSON(content);
   }
 
-  return { content: fetched.content, resolvedSourceMapURL };
+  // Parse the source map and fetch any source files not embedded in
+  // sourcesContent, then return the map with a fully-populated sourcesContent.
+  const sourceMap = JSON.parse(content);
+  const sources = sourceMap.sources ?? [];
+  const sourcesContent = sourceMap.sourcesContent ?? [];
+
+  const updatedSourcesContent = await Promise.all(
+    sources.map(async (sourceUrl, i) => {
+      if (sourcesContent[i] != null) {
+        return sourcesContent[i];
+      }
+      const absoluteSourceUrl = new URL(
+        sourceUrl,
+        resolvedSourceMapURL
+      ).toString();
+      try {
+        const sourceFetched = await networkRequest(absoluteSourceUrl, {
+          loadFromCache: false,
+          allowRedirects: false,
+          sourceMapBaseURL: resolvedSourceMapURL,
+        });
+        return sourceFetched.content;
+      } catch (_e) {
+        return null;
+      }
+    })
+  );
+
+  sourceMap.sourcesContent = updatedSourcesContent;
+  return { content: JSON.stringify(sourceMap), resolvedSourceMapURL };
 }
 
 /**
